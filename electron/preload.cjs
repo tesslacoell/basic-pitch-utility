@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   isElectron: true,
+  platform: process.platform,
   startDrag: ({ fileName, base64Data }) => {
     ipcRenderer.send('start-drag', { fileName, base64Data });
   },

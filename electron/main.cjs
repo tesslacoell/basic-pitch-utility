@@ -3,6 +3,11 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+// Chromium WebGL & GPU hardware acceleration switches
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-webgl');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+
 // Directory for temporary dragged MIDI files
 const tempDir = path.join(os.tmpdir(), 'basic-pitch-midi-stems');
 if (!fs.existsSync(tempDir)) {

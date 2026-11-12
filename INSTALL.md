@@ -313,6 +313,18 @@ If running a manual `npm install` on an older or strict npm environment triggers
   ```
 - Or run `./build.sh` (or `build.bat`), which handles this resolution check and fallback automatically.
 
+### macOS Window Dragging & Titlebar Management
+- **Native Window Drag Region**: The application header uses `-webkit-app-region: drag` so you can click and drag the window anywhere by its top header bar on macOS.
+- **Traffic Light Clearance**: When running inside Electron with `hiddenInset` titlebar on macOS, the header automatically offsets with `pl-20` (80px padding) so the brand logo never collides with native macOS traffic light window controls (close, minimize, zoom).
+- **Interactive Buttons**: All interactive header buttons and modal triggers use `-webkit-app-region: no-drag` to ensure full clickability and responsiveness.
+
+### WebGL Fragment Shader Error ("Failed to compile fragment shader")
+- **Cause**: On certain macOS hardware (especially Apple Silicon / ANGLE / Metal shader translators in Chromium), TensorFlow.js WebGL backend may hit driver-level shader compilation errors when executing packed convolution layers.
+- **Automatic Fallback Solution**:
+  1. The app sets proactive WebGL safety flags (`WEBGL_PACK: false`, `WEBGL_RENDER_FLOAT32_CAPABLE: false`, `WEBGL_FORCE_F16_TEXTURES: false`).
+  2. If any shader compilation failure is detected during audio transcription, the engine **automatically catches the error and seamlessly falls back to the TensorFlow.js CPU backend**, re-running inference transparently without crashing or failing your audio processing.
+  3. Chromium GPU acceleration flags (`--ignore-gpu-blocklist`, `--enable-webgl`) have been enabled in `electron/main.cjs`.
+
 ### macOS
 - **Gatekeeper Warning on Unpackaged Builds**: When running locally generated unsigned `.dmg` or `.app` bundles, macOS Gatekeeper may show a warning: *"App cannot be opened because Apple cannot check it for malicious software"*.
   - To open: Right-click (or Control-click) the application in Finder and select **Open**.

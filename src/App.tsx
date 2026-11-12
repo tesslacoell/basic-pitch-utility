@@ -25,6 +25,7 @@ import {
   MultiStemConversionResult,
   MultiStemSynthPlayer,
   TranscribedNote,
+  forceCpuBackend,
 } from './services/basicPitchService';
 import {
   StemType,
@@ -48,6 +49,10 @@ export default function App() {
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
 
   const isElectron = typeof window !== 'undefined' && Boolean(window.electronAPI?.isElectron);
+  const isMac =
+    typeof window !== 'undefined' &&
+    (window.electronAPI?.platform === 'darwin' ||
+      (typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent || '')));
 
   // Selected stems for extraction
   const [selectedStems, setSelectedStems] = useState<Set<StemType>>(
@@ -354,8 +359,13 @@ export default function App() {
       onDrop={handleDrop}
       className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col justify-between selection:bg-emerald-500/20"
     >
-      {/* Top Bar */}
-      <header className="border-b border-neutral-900 bg-neutral-950/80 backdrop-blur px-6 py-4">
+      {/* Top Bar / macOS Window Drag Header */}
+      <header
+        className={`drag-region select-none border-b border-neutral-900 bg-neutral-950/80 backdrop-blur py-3.5 transition-all ${
+          isElectron && isMac ? 'pl-20 pr-6' : 'px-6'
+        }`}
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      >
         <div className="max-w-4xl mx-auto flex items-center justify-between gap-8">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
@@ -381,7 +391,10 @@ export default function App() {
             </div>
 
             {isElectron ? (
-              <span className="text-xs text-emerald-400 font-medium flex items-center gap-1.5 px-2.5 py-1 bg-emerald-950/40 border border-emerald-800/60 rounded-md">
+              <span
+                className="no-drag-region text-xs text-emerald-400 font-medium flex items-center gap-1.5 px-2.5 py-1 bg-emerald-950/40 border border-emerald-800/60 rounded-md"
+                style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+              >
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 Standalone Desktop App
               </span>
@@ -389,7 +402,8 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setShowStandaloneModal(true)}
-                className="px-2.5 py-1 text-xs text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-md transition-colors flex items-center gap-1.5 cursor-pointer"
+                className="no-drag-region px-2.5 py-1 text-xs text-neutral-300 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-md transition-colors flex items-center gap-1.5 cursor-pointer"
+                style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
               >
                 <Laptop className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Run Standalone</span>
@@ -931,7 +945,10 @@ export default function App() {
             </p>
             <button
               type="button"
-              onClick={handleReset}
+              onClick={async () => {
+                await forceCpuBackend();
+                handleReset();
+              }}
               className="px-4 py-2 text-xs font-medium text-neutral-200 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
             >
               <RefreshCw className="w-4 h-4" />
@@ -951,7 +968,10 @@ export default function App() {
 
       {/* Standalone Desktop Guidance Modal */}
       {showStandaloneModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div
+          className="no-drag-region fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
           <div className="w-full max-w-lg bg-neutral-900 border border-neutral-800 rounded-2xl p-6 shadow-2xl relative">
             <button
               type="button"

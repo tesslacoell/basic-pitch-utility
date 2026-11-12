@@ -1,4 +1,5 @@
 import { BasicPitch, outputToNotesPoly, addPitchBendsToNoteEvents, noteFramesToTime } from '@spotify/basic-pitch';
+import * as tf from '@tensorflow/tfjs';
 import { Midi } from '@tonejs/midi';
 import JSZip from 'jszip';
 import {
@@ -7,6 +8,15 @@ import {
   isolateStemAudioBuffer,
   StemDefinition,
 } from './stemSeparationService';
+
+// Configure TensorFlow.js WebGL safety flags to prevent shader compilation crashes on macOS / ANGLE / Metal
+try {
+  tf.env().set('WEBGL_PACK', false);
+  tf.env().set('WEBGL_RENDER_FLOAT32_CAPABLE', false);
+  tf.env().set('WEBGL_FORCE_F16_TEXTURES', false);
+} catch (e) {
+  console.debug('Failed to configure tf WebGL env flags:', e);
+}
 
 export interface TranscribedNote {
   midi: number;
@@ -67,6 +77,54 @@ function getBasicPitchInstance(): BasicPitch {
   return cachedBasicPitchInstance;
 }
 
+/**
+ * Safely evaluates the Basic Pitch model on the provided audio buffer.
+ * If WebGL shader compilation fails (e.g., 'Failed to compile fragment shader' on macOS GPU/Metal),
+ * it automatically switches the TensorFlow.js backend to 'cpu' and retries inference transparently.
+ */
+async function evaluateModelWithCpuFallback(
+  audioBuffer: AudioBuffer,
+  onFrames: (frames: number[][], onsets: number[][], contours: number[][]) => void,
+  onProgress: (pct: number) => void
+): Promise<void> {
+  let instance = getBasicPitchInstance();
+
+  try {
+    await instance.evaluateModel(audioBuffer, onFrames, onProgress);
+  } catch (err: unknown) {
+    const errString = err instanceof Error ? err.message : String(err);
+    const isShaderOrGpuError =
+      errString.toLowerCase().includes('shader') ||
+      errString.toLowerCase().includes('fragment') ||
+      errString.toLowerCase().includes('compile') ||
+      errString.toLowerCase().includes('webgl') ||
+      errString.toLowerCase().includes('glsl') ||
+      errString.toLowerCase().includes('context') ||
+      errString.toLowerCase().includes('texture') ||
+      errString.toLowerCase().includes('backend');
+
+    if (isShaderOrGpuError) {
+      console.warn(
+        `[Basic Pitch] WebGL shader compilation failed ("${errString}"). Automatically falling back to CPU backend...`
+      );
+      try {
+        await tf.setBackend('cpu');
+        await tf.ready();
+        cachedBasicPitchInstance = null; // Recreate BasicPitch instance bound to CPU
+        instance = getBasicPitchInstance();
+        await instance.evaluateModel(audioBuffer, onFrames, onProgress);
+        console.info('[Basic Pitch] Successfully transcribed stem using CPU backend.');
+        return;
+      } catch (cpuErr: unknown) {
+        console.error('[Basic Pitch] CPU fallback transcription failed:', cpuErr);
+        throw cpuErr;
+      }
+    }
+
+    throw err;
+  }
+}
+
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 export function midiToNoteName(midiNumber: number): string {
@@ -117,7 +175,6 @@ export async function convertAudioToStems(
   }
 
   const durationSeconds = Math.round(masterBuffer.duration * 10) / 10;
-  const basicPitch = getBasicPitchInstance();
   const stemResults: StemResult[] = [];
 
   // Master multi-track MIDI file containing all extracted stems on separate channels/tracks
@@ -141,12 +198,12 @@ export async function convertAudioToStems(
     // Isolate & resample stem to 22.05 kHz mono
     const stemBuffer = await isolateStemAudioBuffer(masterBuffer, stemType);
 
-    // Evaluate model for this stem
+    // Evaluate model for this stem with automatic CPU fallback if WebGL shader compilation fails
     const frames: number[][] = [];
     const onsets: number[][] = [];
     const contours: number[][] = [];
 
-    await basicPitch.evaluateModel(
+    await evaluateModelWithCpuFallback(
       stemBuffer,
       (f, o, c) => {
         frames.push(...f);
@@ -155,9 +212,10 @@ export async function convertAudioToStems(
       },
       (modelPct) => {
         const currentPct = Math.round(stemBasePct + modelPct * (progressPerStem * 0.8));
+        const backendNotice = tf.getBackend() === 'cpu' ? ' (CPU)' : '';
         onProgress(
           currentPct,
-          `Transcribing ${def.shortName} stem (${Math.round(modelPct * 100)}%)...`
+          `Transcribing ${def.shortName} stem${backendNotice} (${Math.round(modelPct * 100)}%)...`
         );
       }
     );
@@ -459,3 +517,18 @@ export class MultiStemSynthPlayer {
     return this.isPlaying;
   }
 }
+
+/**
+ * Explicitly forces TensorFlow.js into CPU inference mode and resets model caches.
+ */
+export async function forceCpuBackend(): Promise<void> {
+  try {
+    await tf.setBackend('cpu');
+    await tf.ready();
+    cachedBasicPitchInstance = null;
+    console.info('[Basic Pitch] Explicitly switched to CPU backend.');
+  } catch (err) {
+    console.warn('[Basic Pitch] Could not force CPU backend:', err);
+  }
+}
+
