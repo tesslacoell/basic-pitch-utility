@@ -1,0 +1,6 @@
+{
+  "name": "Basic Pitch Audio-to-MIDI",
+  "description": "Convert audio files to polyphonic MIDI using Spotify's Basic Pitch neural network with simple drag-and-drop.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
