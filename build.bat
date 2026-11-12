@@ -6,6 +6,19 @@ echo ============================================================
 echo  Basic Pitch Audio-to-MIDI Toolkit - Windows Setup
 echo ============================================================
 
+if "%1"=="clean" goto do_clean
+if "%1"=="--clean" goto do_clean
+goto check_node
+
+:do_clean
+echo Removing build artifacts (dist/, release/, node_modules/.vite)...
+if exist dist rmdir /s /q dist
+if exist release rmdir /s /q release
+if exist node_modules\.vite rmdir /s /q node_modules\.vite
+echo [SUCCESS] Clean completed.
+if "%2"=="" exit /b 0
+
+:check_node
 where node >nul 2>nul
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Node.js is not installed or not in PATH.

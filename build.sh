@@ -15,6 +15,13 @@ echo "============================================================"
 
 # Check if Node.js is installed
 if ! command -v node >/dev/null 2>&1; then
+    if [ "$1" = "clean" ] || [ "$1" = "--clean" ]; then
+        echo "Removing build artifacts (dist/, release/)..."
+        rm -rf dist release node_modules/.vite
+        echo "✔ Clean complete."
+        exit 0
+    fi
+
     echo "✖ Error: Node.js is not installed."
     echo "Please install Node.js 18+ from https://nodejs.org or via package manager:"
     echo "  macOS: brew install node"

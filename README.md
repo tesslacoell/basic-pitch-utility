@@ -37,6 +37,9 @@ The repository includes an automatic cross-platform build script that detects yo
 
 # Or build and launch the desktop window immediately:
 ./build.sh --run
+
+# Clean build files (dist/ and release/):
+./build.sh clean
 ```
 
 ### Windows (Command Prompt / PowerShell):
@@ -46,6 +49,9 @@ build.bat
 
 # Or build and launch immediately:
 build.bat --run
+
+# Clean build files:
+build.bat clean
 ```
 
 ### Cross-Platform via npm:
@@ -55,6 +61,9 @@ npm run toolkit:build
 
 # Launch standalone desktop window immediately:
 npm run toolkit:run
+
+# Clean build artifacts:
+npm run clean
 ```
 
 ---
@@ -64,7 +73,10 @@ npm run toolkit:run
 | Command | Description |
 | :--- | :--- |
 | `./build.sh` | Automated macOS/Linux setup, dependency check & native installer build |
+| `./build.sh clean` | **Cleans previous `dist/` and `release/` build files** |
 | `build.bat` | Automated Windows setup, dependency check & installer build |
+| `build.bat clean` | **Cleans Windows build files** |
+| `npm run clean` | Removes `dist/`, `release/`, and build cache |
 | `npm run toolkit:run` | Builds and immediately launches the native standalone desktop app |
 | `npm run electron:dev` | Starts the standalone Electron desktop window directly |
 | `npm run electron:build` | Packages native installers (`.dmg`, `.exe`, `.AppImage`) into `release/` |

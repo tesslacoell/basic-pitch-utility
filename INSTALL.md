@@ -121,11 +121,34 @@ npm run toolkit:build
 npm run toolkit:run
 ```
 
-### Available Script Flags:
+### Clean Option (Removing Build Artifacts):
+To clean previous build files (`dist/`, `release/`, and `.vite` build cache):
+- **macOS & Linux**:
+  ```bash
+  ./build.sh clean
+  ```
+- **Windows**:
+  ```cmd
+  build.bat clean
+  ```
+- **npm**:
+  ```bash
+  npm run clean
+  ```
+
+You can also combine clean with a fresh build or run in a single command:
+```bash
+# Clean first, then build and launch standalone window:
+./build.sh clean --run
+# Or on Windows:
+build.bat clean --run
+```
+
+### Available Script Commands & Flags:
+- `clean` (or `--clean`): Wipes `dist/`, `release/`, and cache folders. If passed alone, cleans and exits immediately.
 - `--run`: Compiles and immediately launches the standalone desktop application window.
-- `--package`: Packages standalone native installers (`.dmg`, `.exe`, `.AppImage`) in `release/` (default behavior).
+- `--package`: Packages standalone native installers (`.dmg`, `.exe`, `.AppImage`) into `release/` (default behavior).
 - `--web`: Compiles only the web distribution into `dist/`.
-- `--clean`: Wipes previous `dist/` and `release/` folders prior to building.
 
 ---
 

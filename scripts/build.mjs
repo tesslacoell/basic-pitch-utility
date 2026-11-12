@@ -55,10 +55,42 @@ function header(title) {
 
 // Parse command line arguments
 const args = process.argv.slice(2);
-const shouldRun = args.includes('--run');
-const onlyWeb = args.includes('--web');
-const shouldClean = args.includes('--clean');
-const shouldPackage = !onlyWeb && (args.includes('--package') || !shouldRun);
+const isCleanCommand = args.includes('clean') || args.includes('--clean');
+const shouldRun = args.includes('--run') || args.includes('run');
+const onlyWeb = args.includes('--web') || args.includes('web');
+const hasExplicitPackage = args.includes('--package') || args.includes('package');
+const hasExplicitBuild = args.includes('--build') || args.includes('build');
+const onlyClean = isCleanCommand && !shouldRun && !hasExplicitPackage && !hasExplicitBuild && !onlyWeb;
+const shouldPackage = !onlyWeb && !onlyClean && (hasExplicitPackage || !shouldRun);
+
+// Helper function to remove build directories
+function cleanBuildArtifacts() {
+  const dirs = [
+    { name: 'dist', path: path.join(ROOT_DIR, 'dist') },
+    { name: 'release', path: path.join(ROOT_DIR, 'release') },
+    { name: 'node_modules/.vite', path: path.join(ROOT_DIR, 'node_modules', '.vite') },
+  ];
+  let cleanedAny = false;
+  dirs.forEach(({ name, path: dirPath }) => {
+    if (fs.existsSync(dirPath)) {
+      log(`Removing ${name}/...`);
+      fs.rmSync(dirPath, { recursive: true, force: true });
+      cleanedAny = true;
+    }
+  });
+  if (cleanedAny) {
+    success('Clean completed: build directories removed.');
+  } else {
+    log('Build directories already clean.');
+  }
+}
+
+// Standalone clean command execution
+if (onlyClean) {
+  header('Cleaning Build Directories');
+  cleanBuildArtifacts();
+  process.exit(0);
+}
 
 header('Basic Pitch Audio-to-MIDI & Stem Extractor');
 
@@ -104,13 +136,9 @@ if (majorVersion < 18) {
 }
 
 // 3. Clean if requested
-if (shouldClean) {
-  log('Cleaning previous build artifacts (dist/, release/)...');
-  const distDir = path.join(ROOT_DIR, 'dist');
-  const releaseDir = path.join(ROOT_DIR, 'release');
-  if (fs.existsSync(distDir)) fs.rmSync(distDir, { recursive: true, force: true });
-  if (fs.existsSync(releaseDir)) fs.rmSync(releaseDir, { recursive: true, force: true });
-  success('Clean complete.');
+if (isCleanCommand) {
+  log('Cleaning previous build artifacts...');
+  cleanBuildArtifacts();
 }
 
 // 4. Install Dependencies if needed
