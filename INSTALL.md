@@ -47,6 +47,10 @@ The project dependencies defined in `package.json` cover three categories:
 
 ```
 /
+├── build.sh                # macOS & Linux one-click automated setup & build script
+├── build.bat               # Windows one-click automated setup & build script
+├── scripts/
+│   └── build.mjs           # Cross-platform automated build engine (Node.js)
 ├── electron/
 │   ├── main.cjs            # Electron main process (window, native startDrag, save dialog)
 │   ├── preload.cjs         # Context-isolated secure bridge (window.electronAPI)
@@ -71,6 +75,7 @@ The project dependencies defined in `package.json` cover three categories:
 │   ├── index.css               # Global Tailwind CSS configuration
 │   └── main.tsx                # React DOM root entry point
 ├── INSTALL.md                  # This build & installation guide
+├── README.md                   # Project overview & architectural documentation
 ├── index.html                  # HTML entry point with Plus Jakarta Sans & JetBrains Mono
 ├── package.json                # Scripts, dependencies, and electron-builder configuration
 ├── tsconfig.json               # TypeScript compiler options
@@ -79,7 +84,54 @@ The project dependencies defined in `package.json` cover three categories:
 
 ---
 
-## 4. Installation Steps
+## 4. One-Click Automated Build & Setup (Recommended)
+
+The project includes an **automatic OS-detecting build script** that automatically:
+1. Detects your operating system (**macOS** Apple Silicon / Intel, **Windows**, or **Linux**)
+2. Verifies your Node.js runtime environment (>= 18.0.0)
+3. Automatically fetches and installs all required dependencies
+4. Verifies and restores local neural network model weights
+5. Builds the production toolkit and compiles all DSP audio filters
+6. Builds the standalone desktop installer for your platform (or launches the app immediately)
+
+### Run the Automated Script for Your Platform:
+
+#### macOS & Linux:
+```bash
+./build.sh
+```
+*(To build and immediately launch the standalone desktop window):*
+```bash
+./build.sh --run
+```
+
+#### Windows (Command Prompt or PowerShell):
+```cmd
+build.bat
+```
+*(To build and immediately launch):*
+```cmd
+build.bat --run
+```
+
+#### Cross-Platform / Node.js Direct:
+```bash
+npm run toolkit:build
+# or to build and launch immediately:
+npm run toolkit:run
+```
+
+### Available Script Flags:
+- `--run`: Compiles and immediately launches the standalone desktop application window.
+- `--package`: Packages standalone native installers (`.dmg`, `.exe`, `.AppImage`) in `release/` (default behavior).
+- `--web`: Compiles only the web distribution into `dist/`.
+- `--clean`: Wipes previous `dist/` and `release/` folders prior to building.
+
+---
+
+## 5. Manual Step-by-Step Installation (Alternative)
+
+If you prefer to run each step manually instead of using the automated script:
 
 ### Step 1: Open Terminal in Project Root
 ```bash
@@ -90,7 +142,6 @@ cd /path/to/project
 ```bash
 npm install
 ```
-*(Or using `pnpm install` / `yarn install` if preferred).*
 
 ### Step 3: Verify Pre-trained Model Weights
 The neural network model weights are bundled directly inside `public/model/`:
@@ -105,7 +156,7 @@ cp node_modules/@spotify/basic-pitch/model/* public/model/
 
 ---
 
-## 5. Standalone Desktop Application (macOS, Windows, Linux)
+## 6. Standalone Desktop Application (macOS, Windows, Linux)
 
 Running as a standalone desktop application provides the highest performance and true OS-level drag-and-drop straight into Digital Audio Workstations.
 
@@ -145,7 +196,7 @@ The generated installers will be in the `release/` directory.
 
 ---
 
-## 6. Running as a Web Application (Alternative)
+## 7. Running as a Web Application (Alternative)
 
 If you prefer to run or preview the application in a standard web browser:
 
@@ -171,12 +222,16 @@ npm run preview
 
 ---
 
-## 7. Package Scripts Quick Reference
+## 8. Package Scripts Quick Reference
 
 | Command | Action |
 | :--- | :--- |
-| `npm run electron:dev` | **Builds frontend and launches the standalone desktop app window** |
-| `npm run electron:build` | **Packages native desktop installers (`.dmg`, `.exe`, `.AppImage`) into `release/`** |
+| `npm run toolkit:build` | **Runs the automated build script to detect OS, install dependencies & package installers** |
+| `npm run toolkit:run` | **Runs the automated build script and immediately launches the standalone app** |
+| `./build.sh` | **macOS & Linux one-click automated setup & build script** |
+| `build.bat` | **Windows one-click automated setup & build script** |
+| `npm run electron:dev` | Builds frontend and launches the standalone desktop app window directly |
+| `npm run electron:build` | Packages native desktop installers (`.dmg`, `.exe`, `.AppImage`) into `release/` |
 | `npm run dev` | Runs the local Vite development web server on `http://localhost:3000` |
 | `npm run build` | Compiles production web assets into the `dist/` directory |
 | `npm run preview` | Previews the compiled `dist/` build in local browser |
@@ -185,7 +240,7 @@ npm run preview
 
 ---
 
-## 8. Workflow & Feature Reference
+## 9. Workflow & Feature Reference
 
 1. **Audio Ingestion**:
    - Drag and drop any audio file (`.mp3`, `.wav`, `.flac`, `.ogg`, `.m4a`, `.aiff`) onto the dropzone.
@@ -201,3 +256,36 @@ npm run preview
 5. **Multi-Track Audition & Piano Roll**:
    - Built-in multi-timbral polyphonic synthesizer to audition stems together or solo/mute individual instruments.
    - Interactive color-coded piano roll with stem filtering.
+
+---
+
+## 10. Troubleshooting & Platform-Specific Notes
+
+### macOS
+- **Gatekeeper Warning on Unpackaged Builds**: When running locally generated unsigned `.dmg` or `.app` bundles, macOS Gatekeeper may show a warning: *"App cannot be opened because Apple cannot check it for malicious software"*.
+  - To open: Right-click (or Control-click) the application in Finder and select **Open**.
+  - Or in Terminal:
+    ```bash
+    xattr -cr /path/to/"Basic Pitch MIDI.app"
+    ```
+- **Permission for Microphone**: If using the microphone recording option, macOS will prompt for audio capture permission on first use.
+
+### Windows
+- **PowerShell Script Execution Policy**: If PowerShell blocks running `build.bat` or npm scripts with an `ExecutionPolicy` error:
+  ```powershell
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+  ```
+- **Antivirus False Positives**: Some third-party antivirus suites flag newly packaged, self-compiled Electron executables. Add `release/` to your folder exclusions if needed.
+
+### Linux
+- **AppImage Execution Permissions**: If double-clicking the `.AppImage` does not launch it:
+  ```bash
+  chmod +x release/*.AppImage
+  ./release/*.AppImage
+  ```
+- **FUSE Dependency**: If running `.AppImage` on Ubuntu 22.04+ or Debian 12 without `libfuse2`:
+  ```bash
+  sudo apt install libfuse2
+  ```
+  *(Or run with `--no-sandbox` if running in an automated Docker container)*.
+- **Audio Subsystem**: Ensure ALSA / PulseAudio or PipeWire is running for Web Audio playback.

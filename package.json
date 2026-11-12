@@ -11,7 +11,10 @@
     "lint": "tsc --noEmit",
     "electron": "electron electron/main.cjs",
     "electron:dev": "vite build && electron electron/main.cjs",
-    "electron:build": "vite build && electron-builder"
+    "electron:build": "vite build && electron-builder",
+    "toolkit:build": "node scripts/build.mjs",
+    "toolkit:run": "node scripts/build.mjs --run",
+    "toolkit:web": "node scripts/build.mjs --web"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
