@@ -261,6 +261,15 @@ npm run preview
 
 ## 10. Troubleshooting & Platform-Specific Notes
 
+### Dependency Resolution (`ERESOLVE could not resolve`)
+If running a manual `npm install` on an older or strict npm environment triggers an `ERESOLVE` conflict:
+- The conflicting `esbuild: "^0.25.0"` entry has been removed from `package.json` so that `vite@8` resolves its own required `esbuild` peer dependency cleanly.
+- If your environment's npm cache has cached older peers, simply run:
+  ```bash
+  npm install --legacy-peer-deps
+  ```
+- Or run `./build.sh` (or `build.bat`), which handles this resolution check and fallback automatically.
+
 ### macOS
 - **Gatekeeper Warning on Unpackaged Builds**: When running locally generated unsigned `.dmg` or `.app` bundles, macOS Gatekeeper may show a warning: *"App cannot be opened because Apple cannot check it for malicious software"*.
   - To open: Right-click (or Control-click) the application in Finder and select **Open**.

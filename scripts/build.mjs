@@ -120,11 +120,20 @@ const basicPitchPath = path.join(nodeModulesPath, '@spotify', 'basic-pitch');
 
 if (!fs.existsSync(nodeModulesPath) || !fs.existsSync(basicPitchPath)) {
   log('Installing npm dependencies (this may take a moment on first run)...');
-  const installResult = spawnSync('npm', ['install'], {
+  let installResult = spawnSync('npm', ['install'], {
     cwd: ROOT_DIR,
     stdio: 'inherit',
     shell: true,
   });
+
+  if (installResult.status !== 0) {
+    warn('Standard npm install encountered peer conflicts. Retrying with --legacy-peer-deps...');
+    installResult = spawnSync('npm', ['install', '--legacy-peer-deps'], {
+      cwd: ROOT_DIR,
+      stdio: 'inherit',
+      shell: true,
+    });
+  }
 
   if (installResult.status !== 0) {
     error('Failed to install dependencies. Check npm logs above.');
