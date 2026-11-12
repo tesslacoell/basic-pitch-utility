@@ -180,7 +180,11 @@ export default function App() {
       setState('converting');
       setProgress(4);
       setStatusMessage(`Loading ${displayName}...`);
-      const resp = await fetch(samplePath);
+      const resolvedUrl =
+        window.location.protocol === 'file:'
+          ? new URL(samplePath.replace(/^\//, ''), window.location.href).href
+          : samplePath;
+      const resp = await fetch(resolvedUrl);
       if (!resp.ok) throw new Error(`Could not load ${samplePath}`);
       const blob = await resp.blob();
       await handleProcessAudio(blob, displayName);

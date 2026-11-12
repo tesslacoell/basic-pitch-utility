@@ -73,14 +73,16 @@ npm run clean
 | Command | Description |
 | :--- | :--- |
 | `./build.sh` | Automated macOS/Linux setup, dependency check & native installer build |
+| `./build.sh --run` | Builds and immediately launches the standalone desktop app window |
 | `./build.sh clean` | **Cleans previous `dist/` and `release/` build files** |
 | `build.bat` | Automated Windows setup, dependency check & installer build |
+| `build.bat --run` | Windows: Builds and immediately launches the standalone app |
 | `build.bat clean` | **Cleans Windows build files** |
+| `npm run electron` | **Runs standalone desktop app (offline, loads local files directly, no server needed)** |
+| `npm run server` / `npm run dev` | **Starts the standalone web server on `http://localhost:3000`** |
+| `npm run preview` | Starts the production preview server on `http://localhost:4173` |
 | `npm run clean` | Removes `dist/`, `release/`, and build cache |
-| `npm run toolkit:run` | Builds and immediately launches the native standalone desktop app |
-| `npm run electron:dev` | Starts the standalone Electron desktop window directly |
 | `npm run electron:build` | Packages native installers (`.dmg`, `.exe`, `.AppImage`) into `release/` |
-| `npm run dev` | Starts the local web development server on `http://localhost:3000` |
 | `npm run build` | Compiles static web distribution into `dist/` |
 | `npm run lint` | Runs TypeScript type checking (`tsc --noEmit`) |
 

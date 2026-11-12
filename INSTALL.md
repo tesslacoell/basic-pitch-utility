@@ -219,29 +219,29 @@ The generated installers will be in the `release/` directory.
 
 ---
 
-## 7. Running as a Web Application (Alternative)
+## 7. Starting the Standalone Server (Browser Mode)
 
-If you prefer to run or preview the application in a standard web browser:
+If you wish to run the app as a web server accessible via web browser:
 
-### Development Web Server
+### A. Start the Standalone Development Server:
 ```bash
 npm run dev
+# or:
+npm run server
 ```
-Starts the local development server at:
+This command starts the local standalone server at:
 ```
 http://localhost:3000
 ```
+Open `http://localhost:3000` in any web browser.
 
-### Production Static Build
+### B. Start the Production Preview Server:
+To run the server against compiled, minified production assets:
 ```bash
 npm run build
-```
-Generates minified static assets in `dist/`.
-
-### Preview Static Build Locally
-```bash
 npm run preview
 ```
+This serves the standalone production build from `dist/` at `http://localhost:4173`.
 
 ---
 
@@ -249,15 +249,15 @@ npm run preview
 
 | Command | Action |
 | :--- | :--- |
+| `npm run toolkit:run` | **Runs the automated build script and immediately launches the standalone desktop app** |
 | `npm run toolkit:build` | **Runs the automated build script to detect OS, install dependencies & package installers** |
-| `npm run toolkit:run` | **Runs the automated build script and immediately launches the standalone app** |
 | `./build.sh` | **macOS & Linux one-click automated setup & build script** |
 | `build.bat` | **Windows one-click automated setup & build script** |
-| `npm run electron:dev` | Builds frontend and launches the standalone desktop app window directly |
+| `npm run electron` | **Builds frontend and opens standalone desktop window directly (offline, no server needed)** |
+| `npm run server` / `npm run dev` | **Starts the standalone web server on `http://localhost:3000`** |
+| `npm run preview` | Starts the production preview server on `http://localhost:4173` |
 | `npm run electron:build` | Packages native desktop installers (`.dmg`, `.exe`, `.AppImage`) into `release/` |
-| `npm run dev` | Runs the local Vite development web server on `http://localhost:3000` |
 | `npm run build` | Compiles production web assets into the `dist/` directory |
-| `npm run preview` | Previews the compiled `dist/` build in local browser |
 | `npm run lint` | Runs TypeScript type checking (`tsc --noEmit`) |
 | `npm run clean` | Deletes `dist/` and `release/` build output folders |
 
@@ -283,6 +283,26 @@ npm run preview
 ---
 
 ## 10. Troubleshooting & Platform-Specific Notes
+
+### Electron `ERR_CONNECTION_REFUSED` (Failed to load URL: http://localhost:3000/)
+If you encounter this error when running Electron:
+- **Cause**: Electron was attempting to connect to a dev server on port 3000 that was not currently running in another terminal.
+- **Solution 1 (Recommended - 100% Offline Standalone Desktop)**:
+  Electron is now configured to load the compiled `dist/index.html` directly offline without needing any web server running at all!
+  Simply run:
+  ```bash
+  npm run electron
+  # or:
+  ./build.sh --run
+  ```
+  This builds `dist/` if needed and opens the standalone desktop window directly.
+- **Solution 2 (Web Server Mode)**:
+  If you want to run the web server on `http://localhost:3000`:
+  ```bash
+  npm run server
+  # or:
+  npm run dev
+  ```
 
 ### Dependency Resolution (`ERESOLVE could not resolve`)
 If running a manual `npm install` on an older or strict npm environment triggers an `ERESOLVE` conflict:

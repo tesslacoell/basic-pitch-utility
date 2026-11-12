@@ -57,7 +57,11 @@ let cachedBasicPitchInstance: BasicPitch | null = null;
 
 function getBasicPitchInstance(): BasicPitch {
   if (!cachedBasicPitchInstance) {
-    const modelUrl = `${window.location.origin}/model/model.json`;
+    // Supports both standalone Electron file:// protocol and web http://
+    const modelUrl =
+      window.location.protocol === 'file:'
+        ? new URL('model/model.json', window.location.href).href
+        : `${window.location.origin}/model/model.json`;
     cachedBasicPitchInstance = new BasicPitch(modelUrl);
   }
   return cachedBasicPitchInstance;

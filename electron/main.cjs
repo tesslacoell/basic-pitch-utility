@@ -28,21 +28,49 @@ function createWindow() {
     },
   });
 
-  const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:3000';
-  const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+  const distIndex = path.join(__dirname, '../dist/index.html');
 
-  if (isDev) {
-    mainWindow.loadURL(devServerUrl).catch(() => {
-      // If dev server not yet up, fallback to loading dist
-      mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+  // If explicit dev server URL provided, use it
+  if (process.env.VITE_DEV_SERVER_URL) {
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL).catch(() => {
+      if (fs.existsSync(distIndex)) mainWindow.loadFile(distIndex);
     });
+  } else if (fs.existsSync(distIndex)) {
+    // 100% Standalone Mode: Load local bundled assets directly with zero server needed
+    mainWindow.loadFile(distIndex);
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    // If dist doesn't exist yet, probe if local dev server is running on port 3000
+    const http = require('http');
+    const req = http.get('http://localhost:3000', (res) => {
+      if (res.statusCode === 200) {
+        mainWindow.loadURL('http://localhost:3000');
+      } else {
+        showBuildPrompt(mainWindow);
+      }
+    });
+    req.on('error', () => {
+      showBuildPrompt(mainWindow);
+    });
   }
 
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+}
+
+function showBuildPrompt(win) {
+  win.loadURL(
+    'data:text/html,' +
+      encodeURIComponent(
+        '<!doctype html><html><body style="background:#0a0a0a;color:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;">' +
+          '<div style="max-width:480px;padding:32px;background:#171717;border:1px solid #262626;border-radius:16px;">' +
+          '<h2 style="margin-top:0;color:#10b981;">Basic Pitch Desktop</h2>' +
+          '<p style="color:#a3a3a3;font-size:14px;line-height:1.6;">Standalone build assets not found in <code>dist/</code>. Please run the build command in your terminal:</p>' +
+          '<code style="display:block;background:#000;color:#34d399;padding:12px;border-radius:8px;font-size:13px;margin:16px 0;">npm run build</code>' +
+          '<p style="color:#737373;font-size:12px;">Or run <code>npm run dev</code> to start the development server.</p>' +
+          '</div></body></html>'
+      )
+  );
 }
 
 // Native OS drag-and-drop out to Desktop / DAW (Ableton, Logic, FL Studio, etc.)
