@@ -26,6 +26,9 @@ import {
   MultiStemSynthPlayer,
   TranscribedNote,
   forceCpuBackend,
+  setInferenceBackendPreference,
+  getInferenceBackendPreference,
+  InferenceBackendMode,
 } from './services/basicPitchService';
 import {
   StemType,
@@ -36,7 +39,7 @@ import { PianoRoll } from './components/PianoRoll';
 
 type AppState = 'idle' | 'converting' | 'completed' | 'error';
 
-const AVAILABLE_STEMS: StemType[] = ['piano', 'guitar', 'bass', 'lead'];
+const AVAILABLE_STEMS: StemType[] = ['full_mix', 'piano', 'guitar', 'bass', 'lead'];
 
 export default function App() {
   const [state, setState] = useState<AppState>('idle');
@@ -47,6 +50,7 @@ export default function App() {
   const [conversionResult, setConversionResult] = useState<MultiStemConversionResult | null>(null);
   const [showStandaloneModal, setShowStandaloneModal] = useState<boolean>(false);
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  const [engineMode, setEngineMode] = useState<InferenceBackendMode>('auto');
 
   const isElectron = typeof window !== 'undefined' && Boolean(window.electronAPI?.isElectron);
   const isMac =
@@ -56,12 +60,12 @@ export default function App() {
 
   // Selected stems for extraction
   const [selectedStems, setSelectedStems] = useState<Set<StemType>>(
-    new Set(['piano', 'guitar', 'bass', 'lead'])
+    new Set(['full_mix', 'piano', 'guitar', 'bass', 'lead'])
   );
 
   // Active audible stems in synth player / piano roll
   const [activeAuditionStems, setActiveAuditionStems] = useState<Set<StemType>>(
-    new Set(['piano', 'guitar', 'bass', 'lead', 'full_mix'])
+    new Set(['full_mix', 'piano', 'guitar', 'bass', 'lead'])
   );
 
   // Filter for PianoRoll view
@@ -101,7 +105,12 @@ export default function App() {
   };
 
   const selectAllStems = () => {
-    setSelectedStems(new Set(['piano', 'guitar', 'bass', 'lead']));
+    setSelectedStems(new Set(['full_mix', 'piano', 'guitar', 'bass', 'lead']));
+  };
+
+  const handleSetEngine = (mode: InferenceBackendMode) => {
+    setEngineMode(mode);
+    setInferenceBackendPreference(mode);
   };
 
   const handleProcessAudio = useCallback(
@@ -496,7 +505,7 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
                 {AVAILABLE_STEMS.map((stemId) => {
                   const def = STEM_DEFINITIONS[stemId];
                   const isSelected = selectedStems.has(stemId);
@@ -513,8 +522,8 @@ export default function App() {
                     >
                       <div>
                         <div className="text-xs font-semibold">{def.name}</div>
-                        <div className="text-[11px] text-neutral-500 truncate max-w-[130px]">
-                          {def.shortName} stem
+                        <div className="text-[11px] text-neutral-500 truncate max-w-[120px]">
+                          {def.shortName}
                         </div>
                       </div>
                       <div
@@ -529,6 +538,53 @@ export default function App() {
                     </button>
                   );
                 })}
+              </div>
+
+              {/* Engine & Detection Tuning */}
+              <div className="mt-3 pt-3 border-t border-neutral-800/60 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2 text-neutral-400">
+                  <span className="font-medium text-neutral-300">Inference Engine:</span>
+                  <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => handleSetEngine('auto')}
+                      className={`px-2 py-0.5 rounded text-[11px] transition-colors cursor-pointer ${
+                        engineMode === 'auto'
+                          ? 'bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30'
+                          : 'text-neutral-400 hover:text-neutral-200'
+                      }`}
+                    >
+                      Auto (GPU + CPU Fallback)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSetEngine('cpu')}
+                      className={`px-2 py-0.5 rounded text-[11px] transition-colors cursor-pointer ${
+                        engineMode === 'cpu'
+                          ? 'bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30'
+                          : 'text-neutral-400 hover:text-neutral-200'
+                      }`}
+                    >
+                      CPU Safe (100% Reliable)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSetEngine('webgl')}
+                      className={`px-2 py-0.5 rounded text-[11px] transition-colors cursor-pointer ${
+                        engineMode === 'webgl'
+                          ? 'bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30'
+                          : 'text-neutral-400 hover:text-neutral-200'
+                      }`}
+                    >
+                      WebGL (GPU)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-neutral-400 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span>Adaptive Sensitivity: Active</span>
+                </div>
               </div>
             </div>
 

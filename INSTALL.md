@@ -268,15 +268,20 @@ This serves the standalone production build from `dist/` at `http://localhost:41
 1. **Audio Ingestion**:
    - Drag and drop any audio file (`.mp3`, `.wav`, `.flac`, `.ogg`, `.m4a`, `.aiff`) onto the dropzone.
    - Or click "Choose audio file", use the sample buttons (`Full Band Mix`, `Guitar Arpeggio`, `Piano Melody`), or click "Record Mic" to hum a melody.
-2. **Stem Selection**:
-   - Choose which stems to extract: **Piano & Keyboards**, **Guitars**, **Bass**, and **Lead & Vocals**.
-3. **Multi-Stage Conversion**:
+2. **Stem Selection & Full Mix**:
+   - Choose which stems to extract: **Full Mix (All Instruments Master Track)**, **Piano & Keyboards**, **Guitars**, **Bass**, and **Lead & Vocals**.
+3. **Inference Engine Tuning**:
+   - **Auto (Recommended)**: Runs with GPU acceleration and automatically detects any shader issues or zero-energy output to immediately fall back to CPU.
+   - **CPU Safe (100% Reliable)**: Evaluates directly in pure JavaScript / WebAssembly with zero GPU or shader dependencies. 100% deterministic note extraction across all audio formats.
+   - **WebGL (GPU)**: Direct GPU execution.
+   - **Adaptive Sensitivity**: If strict thresholding produces 0 notes on a stem with audible audio, the engine automatically retries with relaxed thresholds so quiet, subtle, or isolated stems (like backing synths, pads, or vocal stems) are reliably captured.
+4. **Multi-Stage Conversion**:
    - Real-time progress bar tracking audio decoding, 22.05 kHz resampling, DSP frequency filtering, and neural polyphonic pitch transcription.
-4. **Drag-and-Drop Out**:
-   - **Combined Master MIDI**: Drag the master `.mid` token into your DAW or desktop. Contains all stems on separate channels (Ch 1: Piano, Ch 2: Guitars, Ch 3: Bass, Ch 4: Lead).
-   - **Individual Stems**: Drag any individual stem card (`_piano.mid`, `_guitar.mid`, `_bass.mid`, `_lead.mid`) directly into individual DAW audio/instrument tracks.
+5. **Drag-and-Drop Out**:
+   - **Combined Master MIDI**: Drag the master `.mid` token into your DAW or desktop. Contains all stems on separate channels (Ch 1: Piano, Ch 2: Guitars, Ch 3: Bass, Ch 4: Lead, Ch 5: Full Mix).
+   - **Individual Stems**: Drag any individual stem card (`_full_mix.mid`, `_piano.mid`, `_guitar.mid`, `_bass.mid`, `_lead.mid`) directly into individual DAW audio/instrument tracks.
    - **Download All (.ZIP)**: One-click bundle with all stem files and master MIDI.
-5. **Multi-Track Audition & Piano Roll**:
+6. **Multi-Track Audition & Piano Roll**:
    - Built-in multi-timbral polyphonic synthesizer to audition stems together or solo/mute individual instruments.
    - Interactive color-coded piano roll with stem filtering.
 

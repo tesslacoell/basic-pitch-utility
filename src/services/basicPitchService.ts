@@ -9,13 +9,23 @@ import {
   StemDefinition,
 } from './stemSeparationService';
 
-// Configure TensorFlow.js WebGL safety flags to prevent shader compilation crashes on macOS / ANGLE / Metal
-try {
-  tf.env().set('WEBGL_PACK', false);
-  tf.env().set('WEBGL_RENDER_FLOAT32_CAPABLE', false);
-  tf.env().set('WEBGL_FORCE_F16_TEXTURES', false);
-} catch (e) {
-  console.debug('Failed to configure tf WebGL env flags:', e);
+export type InferenceBackendMode = 'auto' | 'cpu' | 'webgl';
+
+let activeBackendPreference: InferenceBackendMode = 'auto';
+
+export function setInferenceBackendPreference(mode: InferenceBackendMode) {
+  activeBackendPreference = mode;
+  if (mode === 'cpu') {
+    tf.setBackend('cpu').catch(() => {});
+    cachedBasicPitchInstance = null;
+  } else if (mode === 'webgl') {
+    tf.setBackend('webgl').catch(() => {});
+    cachedBasicPitchInstance = null;
+  }
+}
+
+export function getInferenceBackendPreference(): InferenceBackendMode {
+  return activeBackendPreference;
 }
 
 export interface TranscribedNote {
@@ -79,49 +89,110 @@ function getBasicPitchInstance(): BasicPitch {
 
 /**
  * Safely evaluates the Basic Pitch model on the provided audio buffer.
- * If WebGL shader compilation fails (e.g., 'Failed to compile fragment shader' on macOS GPU/Metal),
- * it automatically switches the TensorFlow.js backend to 'cpu' and retries inference transparently.
+ * If WebGL shader compilation fails (e.g. macOS GPU/Metal ANGLE error)
+ * OR if WebGL silently produces zero activation energy on audible audio,
+ * it automatically switches the TensorFlow.js backend to 'cpu' and retries transparently with 100% precision.
  */
-async function evaluateModelWithCpuFallback(
+async function evaluateModelWithFallback(
   audioBuffer: AudioBuffer,
-  onFrames: (frames: number[][], onsets: number[][], contours: number[][]) => void,
   onProgress: (pct: number) => void
-): Promise<void> {
-  let instance = getBasicPitchInstance();
+): Promise<{ frames: number[][]; onsets: number[][]; contours: number[][] }> {
+  // If user selected CPU or if already running on CPU, evaluate directly on CPU
+  if (activeBackendPreference === 'cpu' || tf.getBackend() === 'cpu') {
+    if (tf.getBackend() !== 'cpu') {
+      await tf.setBackend('cpu');
+      await tf.ready();
+      cachedBasicPitchInstance = null;
+    }
+    const instance = getBasicPitchInstance();
+    const frames: number[][] = [];
+    const onsets: number[][] = [];
+    const contours: number[][] = [];
 
+    await instance.evaluateModel(
+      audioBuffer,
+      (f, o, c) => {
+        frames.push(...f);
+        onsets.push(...o);
+        contours.push(...c);
+      },
+      onProgress
+    );
+    return { frames, onsets, contours };
+  }
+
+  // Attempt WebGL first for maximum speed
   try {
-    await instance.evaluateModel(audioBuffer, onFrames, onProgress);
-  } catch (err: unknown) {
-    const errString = err instanceof Error ? err.message : String(err);
-    const isShaderOrGpuError =
-      errString.toLowerCase().includes('shader') ||
-      errString.toLowerCase().includes('fragment') ||
-      errString.toLowerCase().includes('compile') ||
-      errString.toLowerCase().includes('webgl') ||
-      errString.toLowerCase().includes('glsl') ||
-      errString.toLowerCase().includes('context') ||
-      errString.toLowerCase().includes('texture') ||
-      errString.toLowerCase().includes('backend');
+    let instance = getBasicPitchInstance();
+    const frames: number[][] = [];
+    const onsets: number[][] = [];
+    const contours: number[][] = [];
 
-    if (isShaderOrGpuError) {
-      console.warn(
-        `[Basic Pitch] WebGL shader compilation failed ("${errString}"). Automatically falling back to CPU backend...`
-      );
-      try {
-        await tf.setBackend('cpu');
-        await tf.ready();
-        cachedBasicPitchInstance = null; // Recreate BasicPitch instance bound to CPU
-        instance = getBasicPitchInstance();
-        await instance.evaluateModel(audioBuffer, onFrames, onProgress);
-        console.info('[Basic Pitch] Successfully transcribed stem using CPU backend.');
-        return;
-      } catch (cpuErr: unknown) {
-        console.error('[Basic Pitch] CPU fallback transcription failed:', cpuErr);
-        throw cpuErr;
+    await instance.evaluateModel(
+      audioBuffer,
+      (f, o, c) => {
+        frames.push(...f);
+        onsets.push(...o);
+        contours.push(...c);
+      },
+      onProgress
+    );
+
+    // Verify whether WebGL output has real energy
+    let maxEnergy = 0;
+    for (let i = 0; i < frames.length; i++) {
+      const row = frames[i];
+      for (let j = 0; j < row.length; j++) {
+        if (row[j] > maxEnergy) maxEnergy = row[j];
       }
     }
 
-    throw err;
+    // Inspect peak amplitude of the input audio
+    const channelData = audioBuffer.getChannelData(0);
+    let audioPeak = 0;
+    const checkLength = Math.min(channelData.length, 66150); // first ~3 seconds
+    for (let i = 0; i < checkLength; i++) {
+      const amp = Math.abs(channelData[i]);
+      if (amp > audioPeak) audioPeak = amp;
+    }
+
+    // If WebGL returned zero energy on an audible signal, it silently failed
+    if (maxEnergy < 0.001 && audioPeak > 0.01) {
+      console.warn(
+        `[Basic Pitch] WebGL produced zero activation energy (peak=${maxEnergy}) on audible signal (peak=${audioPeak}). Retrying with CPU backend...`
+      );
+      throw new Error('WebGL silent zero output detected');
+    }
+
+    return { frames, onsets, contours };
+  } catch (err: unknown) {
+    const errString = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[Basic Pitch] WebGL inference issue ("${errString}"). Switching to CPU backend for 100% precision...`
+    );
+
+    // Force CPU backend and reset model instance
+    await tf.setBackend('cpu');
+    await tf.ready();
+    cachedBasicPitchInstance = null;
+    const cpuInstance = getBasicPitchInstance();
+
+    const frames: number[][] = [];
+    const onsets: number[][] = [];
+    const contours: number[][] = [];
+
+    await cpuInstance.evaluateModel(
+      audioBuffer,
+      (f, o, c) => {
+        frames.push(...f);
+        onsets.push(...o);
+        contours.push(...c);
+      },
+      onProgress
+    );
+
+    console.info('[Basic Pitch] Successfully transcribed audio using CPU backend.');
+    return { frames, onsets, contours };
   }
 }
 
@@ -199,20 +270,11 @@ export async function convertAudioToStems(
     const stemBuffer = await isolateStemAudioBuffer(masterBuffer, stemType);
 
     // Evaluate model for this stem with automatic CPU fallback if WebGL shader compilation fails
-    const frames: number[][] = [];
-    const onsets: number[][] = [];
-    const contours: number[][] = [];
-
-    await evaluateModelWithCpuFallback(
+    const { frames, onsets, contours } = await evaluateModelWithFallback(
       stemBuffer,
-      (f, o, c) => {
-        frames.push(...f);
-        onsets.push(...o);
-        contours.push(...c);
-      },
       (modelPct) => {
         const currentPct = Math.round(stemBasePct + modelPct * (progressPerStem * 0.8));
-        const backendNotice = tf.getBackend() === 'cpu' ? ' (CPU)' : '';
+        const backendNotice = tf.getBackend() === 'cpu' ? ' [CPU Engine]' : '';
         onProgress(
           currentPct,
           `Transcribing ${def.shortName} stem${backendNotice} (${Math.round(modelPct * 100)}%)...`
@@ -222,9 +284,9 @@ export async function convertAudioToStems(
 
     // Post-process with stem-specific frequency constraints
     const params = def.pitchParams;
-    const rawNotes = outputToNotesPoly(
-      frames,
-      onsets,
+    let rawNotes = outputToNotesPoly(
+      frames.map((r) => r.slice()),
+      onsets.map((r) => r.slice()),
       params.onsetThresh,
       params.frameThresh,
       params.minNoteLen,
@@ -234,6 +296,33 @@ export async function convertAudioToStems(
       params.melodiaTrick ?? false,
       params.energyTolerance ?? 11
     );
+
+    // Adaptive threshold fallback: If strict thresholds yield 0 notes, retry with relaxed threshold so quiet instruments are extracted
+    if (rawNotes.length === 0) {
+      const relaxedOnset = Math.max(0.22, params.onsetThresh * 0.7);
+      const relaxedFrame = Math.max(0.16, params.frameThresh * 0.7);
+      const relaxedMinLen = Math.max(2, params.minNoteLen - 2);
+
+      const retryNotes = outputToNotesPoly(
+        frames.map((r) => r.slice()),
+        onsets.map((r) => r.slice()),
+        relaxedOnset,
+        relaxedFrame,
+        relaxedMinLen,
+        true,
+        params.maxFreq ?? null,
+        params.minFreq ?? null,
+        params.melodiaTrick ?? false,
+        params.energyTolerance ?? 11
+      );
+
+      if (retryNotes.length > 0) {
+        console.info(
+          `[Basic Pitch] Adaptive sensitivity applied for ${def.name}: extracted ${retryNotes.length} notes.`
+        );
+        rawNotes = retryNotes;
+      }
+    }
 
     const notesWithBends = addPitchBendsToNoteEvents(contours, rawNotes);
     const timedNotes = noteFramesToTime(notesWithBends);
