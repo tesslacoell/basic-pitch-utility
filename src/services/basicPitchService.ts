@@ -101,12 +101,6 @@ export interface TrackAnalysis {
 
 export interface MultiStemConversionResult {
   originalFileName: string;
-  /**
-   * The decoded source audio, retained so stems can be re-rendered at full
-   * quality for WAV export on demand. One buffer for the whole result —
-   * the per-stem export renders are produced from it as needed.
-   */
-  sourceBuffer: AudioBuffer;
   durationSeconds: number;
   analysis: TrackAnalysis;
   stems: StemResult[];
@@ -535,7 +529,6 @@ export async function convertAudioToStems(
 
   return {
     originalFileName,
-    sourceBuffer: masterBuffer,
     durationSeconds,
     analysis,
     stems: stemResults,

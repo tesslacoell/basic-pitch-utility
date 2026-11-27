@@ -15,8 +15,6 @@ An audio-to-MIDI converter and instrument stem extractor powered by **Spotify's 
   - 🎸 **Guitars**: Acoustic/electric strums, picking, and guitar body resonance.
   - 🎸 **Bass**: Low-end fundamental basslines, electric bass, and synth bass (30 Hz – 280 Hz).
   - 🎤 **Lead & Vocals**: Melodic top-lines, vocal contours, and pitch bends.
-- **Audio Stem Export**:
-  - The separated stems themselves as **24-bit WAV** files — per-stem download and drag-out, plus an all-stems ZIP — rendered at full quality (source sample rate and channels) from the same filter chains the transcription hears. Useful where a DAW can't isolate a stem for you (e.g. guitar). Drums are MIDI-only: they're transcribed from the mix's transients, not isolated audio.
 - **Combined Master Multi-Track MIDI**:
   - Automatically exports all extracted stems arranged onto separate MIDI channels (Ch 1: Piano, Ch 2: Guitars, Ch 3: Bass, Ch 4: Lead) in a single master `.mid` file.
 - **Built-in Audition & Visualizer**:

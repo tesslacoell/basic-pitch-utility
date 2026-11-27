@@ -36,11 +36,7 @@ import {
   StemType,
   STEM_DEFINITIONS,
   StemDefinition,
-  renderStemAudioForExport,
-  canExportAudioStem,
 } from './services/stemSeparationService';
-import { encodeWav24PcmBytes } from './services/wavExport';
-import JSZip from 'jszip';
 import { PianoRoll } from './components/PianoRoll';
 
 type AppState = 'idle' | 'converting' | 'completed' | 'error';
@@ -106,137 +102,6 @@ export default function App() {
     };
   }, []);
 
-  // ---- Audio stem (WAV) export ----
-  // The conversion result retains the decoded source buffer; each stem's
-  // WAV is rendered from it at full quality (source rate/channels, 24-bit
-  // PCM) and cached, so the download link, the drag token and the stems
-  // ZIP all share a single render. Renders are warmed in the background
-  // after a conversion completes — a full-rate stereo render per stem is
-  // far too much memory to produce eagerly for every run up front, and
-  // drag-out needs the finished bytes synchronously at dragstart.
-  interface StemWav {
-    fileName: string;
-    blob: Blob;
-    blobUrl: string;
-    dataUrl: string;
-    bytes: Uint8Array;
-  }
-  const stemWavPromisesRef = useRef<Map<StemType, Promise<StemWav>>>(new Map());
-  const stemWavResolvedRef = useRef<Map<StemType, StemWav>>(new Map());
-  const stemWavGenerationRef = useRef(0);
-  const [stemWavReady, setStemWavReady] = useState<Set<StemType>>(new Set());
-  const [stemZipBusy, setStemZipBusy] = useState<boolean>(false);
-
-  const clearStemWavCache = useCallback(() => {
-    stemWavGenerationRef.current += 1;
-    stemWavPromisesRef.current = new Map();
-    stemWavResolvedRef.current.forEach((wav) => URL.revokeObjectURL(wav.blobUrl));
-    stemWavResolvedRef.current = new Map();
-    setStemWavReady(new Set());
-  }, []);
-
-  const ensureStemWav = useCallback(
-    (result: MultiStemConversionResult, stem: StemType): Promise<StemWav> => {
-      const existing = stemWavPromisesRef.current.get(stem);
-      if (existing) return existing;
-      const generation = stemWavGenerationRef.current;
-      const pending = (async () => {
-        const rendered = await renderStemAudioForExport(result.sourceBuffer, stem);
-        const bytes = encodeWav24PcmBytes(rendered);
-        const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'audio/wav' });
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = () => reject(reader.error);
-          reader.readAsDataURL(blob);
-        });
-        const baseName =
-          result.originalFileName.replace(/\.[^/.]+$/, '').trim() || 'transcription';
-        return {
-          fileName: `${baseName}_${stem}.wav`,
-          blob,
-          blobUrl: URL.createObjectURL(blob),
-          dataUrl,
-          bytes,
-        } as StemWav;
-      })();
-      pending
-        .then((wav) => {
-          // Ignore renders from a previous conversion (cache was cleared).
-          if (stemWavGenerationRef.current !== generation) {
-            URL.revokeObjectURL(wav.blobUrl);
-            return;
-          }
-          stemWavResolvedRef.current.set(stem, wav);
-          setStemWavReady((prev) => new Set(prev).add(stem));
-        })
-        .catch((err) => {
-          console.warn(`Stem WAV render failed for ${stem}:`, err);
-        });
-      stemWavPromisesRef.current.set(stem, pending);
-      return pending;
-    },
-    []
-  );
-
-  const warmStemWavs = useCallback(
-    (result: MultiStemConversionResult) => {
-      void (async () => {
-        for (const s of result.stems) {
-          if (canExportAudioStem(s.stem)) {
-            try {
-              await ensureStemWav(result, s.stem);
-            } catch {
-              // A failed warm-up is retried on demand by download/ZIP.
-            }
-          }
-        }
-      })();
-    },
-    [ensureStemWav]
-  );
-
-  const handleStemWavDownload = async (stem: StemType) => {
-    if (!conversionResult) return;
-    try {
-      const wav = await ensureStemWav(conversionResult, stem);
-      const a = document.createElement('a');
-      a.href = wav.blobUrl;
-      a.download = wav.fileName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    } catch (err) {
-      console.error('Stem WAV download failed:', err);
-    }
-  };
-
-  const handleDownloadStemZip = async () => {
-    if (!conversionResult || stemZipBusy) return;
-    setStemZipBusy(true);
-    try {
-      const zip = new JSZip();
-      for (const s of conversionResult.stems) {
-        if (!canExportAudioStem(s.stem)) continue;
-        const wav = await ensureStemWav(conversionResult, s.stem);
-        zip.file(wav.fileName, wav.bytes);
-      }
-      const blob = await zip.generateAsync({ type: 'blob' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${conversionResult.originalFileName.replace(/\.[^/.]+$/, '')}_audio_stems.zip`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-    } catch (err) {
-      console.error('Stem ZIP packaging failed:', err);
-    } finally {
-      setStemZipBusy(false);
-    }
-  };
-
   const toggleStemSelection = (stem: StemType) => {
     setSelectedStems((prev) => {
       const next = new Set(prev);
@@ -263,7 +128,6 @@ export default function App() {
       synthPlayerRef.current?.stop();
       setIsPlaying(false);
       setPlaybackTime(0);
-      clearStemWavCache();
 
       setState('converting');
       setProgress(0);
@@ -294,9 +158,6 @@ export default function App() {
         setActiveAuditionStems(new Set(result.stems.map((s) => s.stem)));
         setPianoRollFilter('all');
         setState('completed');
-        // Warm the WAV stem renders in the background so drag-out and the
-        // stems ZIP are instant by the time they're reached.
-        warmStemWavs(result);
       } catch (err: unknown) {
         console.error('Stem conversion failed:', err);
         const msg = err instanceof Error ? err.message : 'Failed to convert audio file to MIDI stems.';
@@ -304,7 +165,7 @@ export default function App() {
         setState('error');
       }
     },
-    [selectedStems, clearStemWavCache, warmStemWavs]
+    [selectedStems]
   );
 
   // Window drag and drop handlers
@@ -466,8 +327,7 @@ export default function App() {
     fileName: string,
     dataUrl: string,
     blobUrl: string,
-    blob: Blob,
-    mimeType: string = 'audio/midi'
+    blob: Blob
   ) => {
     // 1. Standalone Electron: hand the drag to the OS via the main process.
     //    preventDefault() is REQUIRED here (per Electron's native drag &
@@ -483,13 +343,13 @@ export default function App() {
     }
 
     // 2. Standard HTML5 Chromium DownloadURL & file items for web/embedded
-    const downloadUrlPayload = `${mimeType}:${fileName}:${dataUrl}`;
+    const downloadUrlPayload = `audio/midi:${fileName}:${dataUrl}`;
     e.dataTransfer.setData('DownloadURL', downloadUrlPayload);
     e.dataTransfer.setData('text/plain', fileName);
     e.dataTransfer.setData('text/uri-list', blobUrl);
 
     try {
-      const file = new File([blob], fileName, { type: mimeType });
+      const file = new File([blob], fileName, { type: 'audio/midi' });
       if (e.dataTransfer.items && typeof e.dataTransfer.items.add === 'function') {
         e.dataTransfer.items.add(file);
       }
@@ -500,24 +360,11 @@ export default function App() {
     e.dataTransfer.effectAllowed = 'copyMove';
   };
 
-  const handleStemWavDragStart = (e: React.DragEvent<HTMLElement>, stem: StemType) => {
-    const wav = stemWavResolvedRef.current.get(stem);
-    if (!wav) {
-      // Not rendered yet — drag-out needs the bytes synchronously, so warm
-      // the render and let the next drag pick it up.
-      e.preventDefault();
-      if (conversionResult) void ensureStemWav(conversionResult, stem);
-      return;
-    }
-    handleGenericMidiDragStart(e, wav.fileName, wav.dataUrl, wav.blobUrl, wav.blob, 'audio/wav');
-  };
-
   const handleReset = () => {
     synthPlayerRef.current?.stop();
     setIsPlaying(false);
     setPlaybackTime(0);
     setState('idle');
-    clearStemWavCache();
     setConversionResult(null);
     setConversionAnalysis(null);
     setFinalTempoInput('');
@@ -1054,16 +901,6 @@ export default function App() {
                 )}
                 <button
                   type="button"
-                  onClick={handleDownloadStemZip}
-                  disabled={stemZipBusy}
-                  title="The separated audio stems as 24-bit WAV files — the same filter chains the transcription hears, rendered at full quality. No drums: those are transcribed from the mix's transients, not isolated audio."
-                  className="px-3 py-1.5 text-xs text-neutral-200 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  <FileAudio className="w-3.5 h-3.5 text-emerald-400" />
-                  {stemZipBusy ? 'Rendering Stems…' : 'Audio Stems (.ZIP)'}
-                </button>
-                <button
-                  type="button"
                   onClick={handleReset}
                   className="px-3 py-1.5 text-xs text-neutral-400 hover:text-neutral-200 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
                 >
@@ -1251,52 +1088,8 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Audio stem (WAV) drag token — the separated audio
-                          itself, rendered at full quality for DAW use */}
-                      {canExportAudioStem(stemResult.stem) ? (
-                        <div
-                          draggable={stemWavReady.has(stemResult.stem)}
-                          onDragStart={(e) => handleStemWavDragStart(e, stemResult.stem)}
-                          className={`w-full p-3 rounded-lg bg-neutral-950 border border-neutral-800 transition-all flex items-center justify-between select-none ${
-                            stemWavReady.has(stemResult.stem)
-                              ? 'hover:border-neutral-600 cursor-grab active:cursor-grabbing'
-                              : 'opacity-60 cursor-wait'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2.5 truncate">
-                            <FileAudio className="w-4 h-4 shrink-0" style={{ color: def.color }} />
-                            <span className="text-xs font-mono text-neutral-200 truncate">
-                              {stemWavReady.has(stemResult.stem)
-                                ? stemWavResolvedRef.current.get(stemResult.stem)?.fileName
-                                : 'Rendering WAV…'}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1.5 text-neutral-400 shrink-0">
-                            <span className="text-[11px] hidden sm:inline">Drag out</span>
-                            <GripHorizontal className="w-4 h-4 text-neutral-500" />
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-[11px] text-neutral-500 px-1">
-                          No audio stem for drums — they're transcribed from the mix's
-                          transients, not isolated audio.
-                        </p>
-                      )}
-
-                      {/* Download Links */}
-                      <div className="flex items-center justify-between">
-                        {canExportAudioStem(stemResult.stem) ? (
-                          <button
-                            type="button"
-                            onClick={() => handleStemWavDownload(stemResult.stem)}
-                            className="text-xs text-neutral-400 hover:text-neutral-200 transition-colors flex items-center gap-1 cursor-pointer"
-                          >
-                            <Download className="w-3 h-3" />
-                            Download .WAV
-                          </button>
-                        ) : (
-                          <span />
-                        )}
+                      {/* Download Link */}
+                      <div className="flex items-center justify-end">
                         <a
                           href={stemResult.blobUrl}
                           download={stemResult.midiFileName}
