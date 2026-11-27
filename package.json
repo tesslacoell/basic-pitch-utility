@@ -66,14 +66,32 @@
     "mac": {
       "category": "public.app-category.music",
       "icon": "build/icon.png",
-      "target": ["dmg", "zip"]
+      "target": [
+        "dmg",
+        "zip"
+      ]
     },
     "win": {
       "icon": "build/icon.png",
-      "target": ["nsis", "portable"]
+      "target": [
+        "nsis",
+        "portable"
+      ]
     },
     "linux": {
-      "target": ["AppImage", "deb"]
+      "target": [
+        "AppImage",
+        "deb"
+      ]
     }
+  },
+  "allowScripts": {
+    "@google/genai": true,
+    "core-js": true,
+    "electron-winstaller": true,
+    "esbuild@0.28.2": true,
+    "fsevents@2.3.3": true,
+    "onnxruntime-node@1.31.1": true,
+    "protobufjs": true
   }
 }
