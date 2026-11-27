@@ -66,6 +66,7 @@
     "mac": {
       "category": "public.app-category.music",
       "icon": "build/icon.png",
+      "x64ArchFiles": "**/onnxruntime-node/**",
       "target": [
         "dmg",
         "zip"
