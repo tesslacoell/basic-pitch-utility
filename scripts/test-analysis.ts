@@ -18,6 +18,7 @@ import { fftMagnitudes } from '../src/services/dsp';
 import { insertKeySignatureMetaEvent } from '../src/services/midiMeta';
 import { cleanupStemNotes, CleanableNote } from '../src/services/noteCleanup';
 import { applyKeyMapping, countOutOfKey, isInKey } from '../src/services/keyMapping';
+import { buildMidiBytesAtTempo } from '../src/services/midiExport';
 
 const SR = 44100;
 let failures = 0;
@@ -312,6 +313,43 @@ function render(events: { freq: number; start: number; dur: number; gain: number
   // Drop: short C removed, long C (0.9s >= 0.4 protect) kept as intentional.
   const dropped = applyKeyMapping(notes, 6, 'minor', 'drop');
   check('drop keeps long chromatic', dropped.length === 3 && dropped.some((x) => x.midi === 48 && x.duration === 0.9), `got [${dropped.map((x) => `${x.midi}+${x.duration}`).join(', ')}]`);
+}
+
+// --- Test 6: final-tempo re-export — notes keep their absolute times,
+// only the grid moves. A note exactly on beat 100 of the TRUE tempo
+// (115.77) must land on tick 48000 (100 x PPQ 480) when stamped 115.77,
+// and measurably off-grid when stamped with the detected 115.6. ---
+{
+  const beat100Time = 100 * (60 / 115.77);
+  const mkNote = (startTime: number) => ({
+    midi: 69,
+    startTime,
+    duration: 0.2,
+    velocity: 0.8,
+  });
+  const stems = [{ stem: 'piano' as const, notes: [mkNote(0), mkNote(beat100Time)] }];
+
+  const atTrue = buildMidiBytesAtTempo(stems, 'test', 115.77, null);
+  const parsed = new Midi(atTrue.perStem[0].midiBytes);
+  const stampedBpm = parsed.header.tempos[0]?.bpm ?? 0;
+  check('re-export: tempo stamped 115.77', Math.abs(stampedBpm - 115.77) < 0.01, `got ${stampedBpm}`);
+  const onGrid = parsed.tracks[0].notes.find((x) => Math.abs(x.time - beat100Time) < 0.01);
+  check(
+    're-export: beat-100 note lands on tick 48000 at the true tempo',
+    onGrid !== undefined && Math.abs(onGrid.ticks - 48000) <= 1,
+    `ticks=${onGrid?.ticks}`
+  );
+  const masterBpm = new Midi(atTrue.masterBytes).header.tempos[0]?.bpm ?? 0;
+  check('re-export: master file carries the tempo too', Math.abs(masterBpm - 115.77) < 0.01, `got ${masterBpm}`);
+
+  const atDetected = buildMidiBytesAtTempo(stems, 'test', 115.6, null);
+  const parsedOff = new Midi(atDetected.perStem[0].midiBytes);
+  const offGrid = parsedOff.tracks[0].notes.find((x) => Math.abs(x.time - beat100Time) < 0.01);
+  check(
+    're-export: the same note sits off-grid at the detected 115.6',
+    offGrid !== undefined && Math.abs(offGrid.ticks - 48000) >= 50,
+    `ticks=${offGrid?.ticks} (drift ${offGrid ? Math.abs(offGrid.ticks - 48000) : '?'} ticks by beat 100)`
+  );
 }
 
 process.exit(failures > 0 ? 1 : 0);

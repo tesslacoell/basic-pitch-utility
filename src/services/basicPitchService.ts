@@ -10,10 +10,15 @@ import {
 } from './stemSeparationService';
 import { detectTempoFromBuffer, TempoDetectionResult } from './tempoDetection';
 import { detectKeyFromBuffer, KeyDetectionResult } from './keyDetection';
-import { insertKeySignatureMetaEvent } from './midiMeta';
 import { cleanupStemNotes } from './noteCleanup';
 import { applyKeyMapping, countOutOfKey } from './keyMapping';
 import { transcribeDrumsFromBuffer } from './drumTranscription';
+import {
+  applyHeaderMetadata,
+  finalizeMidiBytes,
+  writeNotesToTrack,
+  buildMidiBytesAtTempo,
+} from './midiExport';
 
 export type InferenceBackendMode = 'auto' | 'cpu' | 'webgl';
 
@@ -253,29 +258,6 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
 }
 
 /**
- * Stamps a Midi file with the track's tempo. MUST be called before notes
- * are added: @tonejs/midi converts note times from seconds to ticks
- * through the header's tempo map, so a header set after notes exist
- * cannot repair their tick positions. This is the fix for the historical
- * bug where every export silently assumed 120 BPM and stretched ~1.22x
- * against a 98 BPM song.
- */
-function applyHeaderMetadata(midi: Midi, bpm: number): void {
-  midi.header.setTempo(bpm);
-}
-
-/**
- * Serialises a Midi file and splices in the key_signature meta event.
- * (The event is added at the byte level, not via @tonejs/midi's header,
- * because that library's key-signature encoder is broken — see
- * midiMeta.ts.)
- */
-function finalizeMidiBytes(midi: Midi, key: KeyDetectionResult | null): Uint8Array {
-  const bytes = midi.toArray();
-  return key ? insertKeySignatureMetaEvent(bytes, key.midiSharps, key.mode) : bytes;
-}
-
-/**
  * Converts audio into one or multiple instrument stems using Spotify Basic Pitch
  */
 export async function convertAudioToStems(
@@ -478,18 +460,9 @@ export async function convertAudioToStems(
     finalNotes.forEach((n) => {
       if (n.midi < minMidi) minMidi = n.midi;
       if (n.midi > maxMidi) maxMidi = n.midi;
-
-      singleTrack.addNote({ midi: n.midi, time: n.startTime, duration: n.duration, velocity: n.velocity });
-      masterTrack.addNote({ midi: n.midi, time: n.startTime, duration: n.duration, velocity: n.velocity });
-
-      if (n.pitchBends && n.pitchBends.length > 0) {
-        n.pitchBends.forEach((bend, bIdx) => {
-          const bendTime = n.startTime + (bIdx * n.duration) / n.pitchBends!.length;
-          singleTrack.addPitchBend({ time: bendTime, value: bend });
-          masterTrack.addPitchBend({ time: bendTime, value: bend });
-        });
-      }
     });
+    writeNotesToTrack(singleTrack, finalNotes);
+    writeNotesToTrack(masterTrack, finalNotes);
 
     const singleBytes = finalizeMidiBytes(singleMidi, analysis.key);
     const singleBlob = new Blob([singleBytes.buffer as ArrayBuffer], { type: 'audio/midi' });
@@ -565,6 +538,72 @@ export async function convertAudioToStems(
       blobUrl: masterBlobUrl,
       dataUrl: masterDataUrl,
       fileName: masterFileName,
+    },
+    zipBlob,
+    zipUrl,
+  };
+}
+
+/**
+ * Re-stamps a finished conversion at a new final tempo — the in-app
+ * version of hand-fixing an export's tempo in an editor. The transcribed
+ * notes are untouched (same notes, same absolute times); every export
+ * artifact (per-stem files, the all-stems master, the ZIP) is rebuilt at
+ * the new BPM so downloads and drag-out all carry the corrected grid.
+ * No re-inference: this is pure re-serialisation and effectively instant.
+ * The caller is responsible for revoking the old result's blob URLs.
+ */
+export async function rebuildExportsAtTempo(
+  result: MultiStemConversionResult,
+  bpm: number
+): Promise<MultiStemConversionResult> {
+  const baseName = result.originalFileName.replace(/\.[^/.]+$/, '').trim() || 'transcription';
+  const { perStem, masterBytes } = buildMidiBytesAtTempo(
+    result.stems.map((s) => ({ stem: s.stem, notes: s.notes })),
+    baseName,
+    bpm,
+    result.analysis.key
+  );
+  const bytesByStem = new Map(perStem.map((p) => [p.stem, p.midiBytes]));
+
+  const stems: StemResult[] = result.stems.map((s) => {
+    const midiBytes = bytesByStem.get(s.stem) ?? s.midiBytes;
+    const midiBlob = new Blob([midiBytes.buffer as ArrayBuffer], { type: 'audio/midi' });
+    return {
+      ...s,
+      midiBytes,
+      midiBlob,
+      blobUrl: URL.createObjectURL(midiBlob),
+      dataUrl: `data:audio/midi;base64,${uint8ArrayToBase64(midiBytes)}`,
+    };
+  });
+
+  const masterBlob = new Blob([masterBytes.buffer as ArrayBuffer], { type: 'audio/midi' });
+
+  let zipBlob: Blob | undefined;
+  let zipUrl: string | undefined;
+  try {
+    const zip = new JSZip();
+    zip.file(result.allStemsMidi.fileName, masterBytes);
+    stems.forEach((s) => {
+      zip.file(s.midiFileName, s.midiBytes);
+    });
+    zipBlob = await zip.generateAsync({ type: 'blob' });
+    zipUrl = URL.createObjectURL(zipBlob);
+  } catch (err) {
+    console.warn('Zip packaging skipped:', err);
+  }
+
+  return {
+    ...result,
+    analysis: { ...result.analysis, bpm, bpmSource: 'manual' },
+    stems,
+    allStemsMidi: {
+      midiBytes: masterBytes,
+      midiBlob: masterBlob,
+      blobUrl: URL.createObjectURL(masterBlob),
+      dataUrl: `data:audio/midi;base64,${uint8ArrayToBase64(masterBytes)}`,
+      fileName: result.allStemsMidi.fileName,
     },
     zipBlob,
     zipUrl,

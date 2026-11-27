@@ -22,7 +22,9 @@ import {
 } from 'lucide-react';
 import {
   convertAudioToStems,
+  rebuildExportsAtTempo,
   MultiStemConversionResult,
+  TrackAnalysis,
   MultiStemSynthPlayer,
   TranscribedNote,
   forceCpuBackend,
@@ -54,6 +56,11 @@ export default function App() {
   const [manualBpm, setManualBpm] = useState<string>('');
   const [cleanupEnabled, setCleanupEnabled] = useState<boolean>(true);
   const [keyMappingMode, setKeyMappingMode] = useState<'off' | 'snap' | 'drop'>('off');
+  // Final-tempo adjustment: the analysis as converted (for Reset), the
+  // editable export-tempo field, and a busy flag for the re-export.
+  const [conversionAnalysis, setConversionAnalysis] = useState<TrackAnalysis | null>(null);
+  const [finalTempoInput, setFinalTempoInput] = useState<string>('');
+  const [isRebuildingTempo, setIsRebuildingTempo] = useState<boolean>(false);
 
   const isElectron = typeof window !== 'undefined' && Boolean(window.electronAPI?.isElectron);
   const isMac =
@@ -145,6 +152,8 @@ export default function App() {
           }
         );
         setConversionResult(result);
+        setConversionAnalysis(result.analysis);
+        setFinalTempoInput(String(Math.round(result.analysis.bpm * 100) / 100));
         // Initially enable all extracted stems for audition
         setActiveAuditionStems(new Set(result.stems.map((s) => s.stem)));
         setPianoRollFilter('all');
@@ -357,9 +366,47 @@ export default function App() {
     setPlaybackTime(0);
     setState('idle');
     setConversionResult(null);
+    setConversionAnalysis(null);
+    setFinalTempoInput('');
     setProgress(0);
     setErrorMessage('');
   };
+
+  /**
+   * Re-stamps every export (per-stem files, master, ZIP) at a new final
+   * tempo — no re-run. The notes themselves don't move; the MIDI grid is
+   * re-laid at the exact BPM the user types (e.g. the 115.77 their DAW or
+   * DJ software reports, against a 115.6 detection), so the file imports
+   * onto the grid. Pass restoreAnalysis to put back the as-converted
+   * analysis (the Reset path).
+   */
+  const applyExportTempo = async (bpm: number, restoreAnalysis?: TrackAnalysis) => {
+    if (!conversionResult || isRebuildingTempo) return;
+    if (!Number.isFinite(bpm) || bpm < 20 || bpm > 400) return;
+    setIsRebuildingTempo(true);
+    try {
+      const rebuilt = await rebuildExportsAtTempo(conversionResult, bpm);
+      conversionResult.stems.forEach((s) => URL.revokeObjectURL(s.blobUrl));
+      URL.revokeObjectURL(conversionResult.allStemsMidi.blobUrl);
+      if (conversionResult.zipUrl) URL.revokeObjectURL(conversionResult.zipUrl);
+      setConversionResult(
+        restoreAnalysis ? { ...rebuilt, analysis: restoreAnalysis } : rebuilt
+      );
+      setFinalTempoInput(String(Math.round(bpm * 100) / 100));
+    } catch (err) {
+      console.error('Final-tempo re-export failed:', err);
+    } finally {
+      setIsRebuildingTempo(false);
+    }
+  };
+
+  const parsedFinalTempo = parseFloat(finalTempoInput);
+  const finalTempoValid =
+    Number.isFinite(parsedFinalTempo) && parsedFinalTempo >= 20 && parsedFinalTempo <= 400;
+  const finalTempoAdjusted =
+    conversionResult !== null &&
+    conversionAnalysis !== null &&
+    Math.abs(conversionResult.analysis.bpm - conversionAnalysis.bpm) > 0.001;
 
   // Combined notes for all stems
   const allNotes = useMemo<TranscribedNote[]>(() => {
@@ -750,7 +797,7 @@ export default function App() {
                 <h2 className="text-lg font-semibold text-neutral-100">
                   Stem MIDI Extractions Ready
                 </h2>
-                <div className="flex items-center gap-2 text-xs text-neutral-400 mt-1">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-400 mt-1">
                   <span className="font-medium text-neutral-300">{conversionResult.originalFileName}</span>
                   <span aria-hidden="true">·</span>
                   <span className="tabular-nums">{conversionResult.durationSeconds}s duration</span>
@@ -768,19 +815,73 @@ export default function App() {
                       <span>Key: {conversionResult.analysis.key.keyName}</span>
                     </>
                   )}
+                  <span aria-hidden="true">·</span>
+                  <span className="flex items-center gap-1.5">
+                    <label htmlFor="final-tempo-input" className="text-neutral-400">
+                      Final tempo:
+                    </label>
+                    <input
+                      id="final-tempo-input"
+                      type="text"
+                      inputMode="decimal"
+                      value={finalTempoInput}
+                      disabled={isRebuildingTempo}
+                      onChange={(e) => setFinalTempoInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (
+                          e.key === 'Enter' &&
+                          finalTempoValid &&
+                          Math.abs(parsedFinalTempo - conversionResult.analysis.bpm) > 0.001
+                        ) {
+                          applyExportTempo(parsedFinalTempo);
+                        }
+                      }}
+                      title="Exact tempo to stamp into the exported MIDI — e.g. 115.77 if that's where your transients line up. Applies instantly to every download and drag-out; the notes don't move, the grid does."
+                      className="w-[4.75rem] px-1.5 py-0.5 rounded bg-neutral-900 border border-neutral-800 text-neutral-200 tabular-nums focus:border-neutral-600 outline-none disabled:opacity-50"
+                    />
+                    <span>BPM</span>
+                    {finalTempoValid &&
+                      Math.abs(parsedFinalTempo - conversionResult.analysis.bpm) > 0.001 && (
+                        <button
+                          type="button"
+                          disabled={isRebuildingTempo}
+                          onClick={() => applyExportTempo(parsedFinalTempo)}
+                          className="px-1.5 py-0.5 rounded border border-emerald-800 text-emerald-300 hover:bg-emerald-950 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          Apply
+                        </button>
+                      )}
+                    {finalTempoAdjusted && conversionAnalysis && (
+                      <button
+                        type="button"
+                        disabled={isRebuildingTempo}
+                        title={`Back to the as-converted tempo (${conversionAnalysis.bpm} BPM)`}
+                        onClick={() => applyExportTempo(conversionAnalysis.bpm, conversionAnalysis)}
+                        className="px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </span>
                   <button
                     type="button"
-                    title="Set the tempo field to half the current BPM (fix a double-time detection), then run the file again"
-                    onClick={() => setManualBpm(String(Math.round(conversionResult.analysis.bpm / 2 * 10) / 10))}
-                    className="px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600 transition-colors cursor-pointer"
+                    title="Halve the export tempo (fix a double-time detection) — applies instantly to all exports, no re-run"
+                    disabled={isRebuildingTempo}
+                    onClick={() =>
+                      applyExportTempo(Math.round((conversionResult.analysis.bpm / 2) * 100) / 100)
+                    }
+                    className="px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600 transition-colors cursor-pointer disabled:opacity-50"
                   >
                     ÷2
                   </button>
                   <button
                     type="button"
-                    title="Set the tempo field to double the current BPM (fix a half-time detection), then run the file again"
-                    onClick={() => setManualBpm(String(Math.round(conversionResult.analysis.bpm * 2 * 10) / 10))}
-                    className="px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600 transition-colors cursor-pointer"
+                    title="Double the export tempo (fix a half-time detection) — applies instantly to all exports, no re-run"
+                    disabled={isRebuildingTempo}
+                    onClick={() =>
+                      applyExportTempo(Math.round(conversionResult.analysis.bpm * 2 * 100) / 100)
+                    }
+                    className="px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600 transition-colors cursor-pointer disabled:opacity-50"
                   >
                     ×2
                   </button>
