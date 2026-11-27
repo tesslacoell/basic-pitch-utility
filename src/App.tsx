@@ -37,7 +37,13 @@ import {
   STEM_DEFINITIONS,
   StemDefinition,
 } from './services/stemSeparationService';
+import {
+  fetchStemWavBytes,
+  APP_TO_DEMUCS,
+  SEPARATOR_MODEL,
+} from './services/separationService';
 import { PianoRoll } from './components/PianoRoll';
+import JSZip from 'jszip';
 
 type AppState = 'idle' | 'converting' | 'completed' | 'error';
 
@@ -102,6 +108,145 @@ export default function App() {
     };
   }, []);
 
+  // ---- Separator model consent ----
+  // The app ships without the HTDemucs model. When a conversion first
+  // needs it, the conversion service asks through this hook; the dialog
+  // below shows the license and the promise settles with the answer.
+  const [modelConsentResolver, setModelConsentResolver] = useState<
+    ((agreed: boolean) => void) | null
+  >(null);
+
+  const requestModelConsent = useCallback((): Promise<boolean> => {
+    return new Promise<boolean>((resolve) => {
+      setModelConsentResolver(() => resolve);
+    });
+  }, []);
+
+  const settleModelConsent = (agreed: boolean) => {
+    modelConsentResolver?.(agreed);
+    setModelConsentResolver(null);
+  };
+
+  // ---- Audio stem (WAV) export ----
+  // The separated stems live as 24-bit WAV files in the main process's
+  // session folder. Each stem's bytes are fetched on demand and cached,
+  // so the download link, the drag token and the stems ZIP all share a
+  // single fetch. Nothing is fetched eagerly: a full set of stems is
+  // hundreds of MB, and drag-out warms its stem on first hover/grab.
+  interface StemWav {
+    fileName: string;
+    blob: Blob;
+    blobUrl: string;
+    dataUrl: string;
+    bytes: Uint8Array;
+  }
+  const stemWavPromisesRef = useRef<Map<StemType, Promise<StemWav>>>(new Map());
+  const stemWavResolvedRef = useRef<Map<StemType, StemWav>>(new Map());
+  const stemWavGenerationRef = useRef(0);
+  const [stemWavReady, setStemWavReady] = useState<Set<StemType>>(new Set());
+  const [stemZipBusy, setStemZipBusy] = useState<boolean>(false);
+
+  const canExportAudioStem = useCallback(
+    (result: MultiStemConversionResult, stem: StemType): boolean =>
+      Boolean(result.separationSessionId && APP_TO_DEMUCS[stem]),
+    []
+  );
+
+  const clearStemWavCache = useCallback(() => {
+    stemWavGenerationRef.current += 1;
+    stemWavPromisesRef.current = new Map();
+    stemWavResolvedRef.current.forEach((wav) => URL.revokeObjectURL(wav.blobUrl));
+    stemWavResolvedRef.current = new Map();
+    setStemWavReady(new Set());
+  }, []);
+
+  const ensureStemWav = useCallback(
+    (result: MultiStemConversionResult, stem: StemType): Promise<StemWav> => {
+      const existing = stemWavPromisesRef.current.get(stem);
+      if (existing) return existing;
+      const generation = stemWavGenerationRef.current;
+      const pending = (async () => {
+        if (!result.separationSessionId) {
+          throw new Error('This conversion has no separated audio session.');
+        }
+        const bytes = await fetchStemWavBytes(result.separationSessionId, stem);
+        const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'audio/wav' });
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        });
+        const baseName =
+          result.originalFileName.replace(/\.[^/.]+$/, '').trim() || 'transcription';
+        return {
+          fileName: `${baseName}_${stem}.wav`,
+          blob,
+          blobUrl: URL.createObjectURL(blob),
+          dataUrl,
+          bytes,
+        } as StemWav;
+      })();
+      pending
+        .then((wav) => {
+          // Ignore fetches from a previous conversion (cache was cleared).
+          if (stemWavGenerationRef.current !== generation) {
+            URL.revokeObjectURL(wav.blobUrl);
+            return;
+          }
+          stemWavResolvedRef.current.set(stem, wav);
+          setStemWavReady((prev) => new Set(prev).add(stem));
+        })
+        .catch((err) => {
+          console.warn(`Stem WAV fetch failed for ${stem}:`, err);
+        });
+      stemWavPromisesRef.current.set(stem, pending);
+      return pending;
+    },
+    []
+  );
+
+  const handleStemWavDownload = async (stem: StemType) => {
+    if (!conversionResult) return;
+    try {
+      const wav = await ensureStemWav(conversionResult, stem);
+      const a = document.createElement('a');
+      a.href = wav.blobUrl;
+      a.download = wav.fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err) {
+      console.error('Stem WAV download failed:', err);
+    }
+  };
+
+  const handleDownloadStemZip = async () => {
+    if (!conversionResult || stemZipBusy) return;
+    setStemZipBusy(true);
+    try {
+      const zip = new JSZip();
+      for (const s of conversionResult.stems) {
+        if (!canExportAudioStem(conversionResult, s.stem)) continue;
+        const wav = await ensureStemWav(conversionResult, s.stem);
+        zip.file(wav.fileName, wav.bytes);
+      }
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${conversionResult.originalFileName.replace(/\.[^/.]+$/, '')}_audio_stems.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (err) {
+      console.error('Stem ZIP packaging failed:', err);
+    } finally {
+      setStemZipBusy(false);
+    }
+  };
+
   const toggleStemSelection = (stem: StemType) => {
     setSelectedStems((prev) => {
       const next = new Set(prev);
@@ -128,6 +273,7 @@ export default function App() {
       synthPlayerRef.current?.stop();
       setIsPlaying(false);
       setPlaybackTime(0);
+      clearStemWavCache();
 
       setState('converting');
       setProgress(0);
@@ -149,6 +295,7 @@ export default function App() {
             bpm: Number.isFinite(parsedBpm) && parsedBpm > 0 ? parsedBpm : undefined,
             cleanup: cleanupEnabled,
             keyMapping: keyMappingMode,
+            onSeparatorModelNeeded: requestModelConsent,
           }
         );
         setConversionResult(result);
@@ -327,7 +474,8 @@ export default function App() {
     fileName: string,
     dataUrl: string,
     blobUrl: string,
-    blob: Blob
+    blob: Blob,
+    mimeType: string = 'audio/midi'
   ) => {
     // 1. Standalone Electron: hand the drag to the OS via the main process.
     //    preventDefault() is REQUIRED here (per Electron's native drag &
@@ -343,13 +491,13 @@ export default function App() {
     }
 
     // 2. Standard HTML5 Chromium DownloadURL & file items for web/embedded
-    const downloadUrlPayload = `audio/midi:${fileName}:${dataUrl}`;
+    const downloadUrlPayload = `${mimeType}:${fileName}:${dataUrl}`;
     e.dataTransfer.setData('DownloadURL', downloadUrlPayload);
     e.dataTransfer.setData('text/plain', fileName);
     e.dataTransfer.setData('text/uri-list', blobUrl);
 
     try {
-      const file = new File([blob], fileName, { type: 'audio/midi' });
+      const file = new File([blob], fileName, { type: mimeType });
       if (e.dataTransfer.items && typeof e.dataTransfer.items.add === 'function') {
         e.dataTransfer.items.add(file);
       }
@@ -360,11 +508,24 @@ export default function App() {
     e.dataTransfer.effectAllowed = 'copyMove';
   };
 
+  const handleStemWavDragStart = (e: React.DragEvent<HTMLElement>, stem: StemType) => {
+    const wav = stemWavResolvedRef.current.get(stem);
+    if (!wav) {
+      // Not fetched yet — drag-out needs the bytes synchronously, so warm
+      // the fetch and let the next drag pick it up.
+      e.preventDefault();
+      if (conversionResult) void ensureStemWav(conversionResult, stem);
+      return;
+    }
+    handleGenericMidiDragStart(e, wav.fileName, wav.dataUrl, wav.blobUrl, wav.blob, 'audio/wav');
+  };
+
   const handleReset = () => {
     synthPlayerRef.current?.stop();
     setIsPlaying(false);
     setPlaybackTime(0);
     setState('idle');
+    clearStemWavCache();
     setConversionResult(null);
     setConversionAnalysis(null);
     setFinalTempoInput('');
@@ -899,6 +1060,17 @@ export default function App() {
                     Download All (.ZIP)
                   </a>
                 )}
+                {conversionResult.separationSessionId && (
+                  <button
+                    type="button"
+                    onClick={handleDownloadStemZip}
+                    disabled={stemZipBusy}
+                    className="px-3 py-1.5 text-xs text-neutral-200 hover:text-white bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Archive className="w-3.5 h-3.5 text-amber-400" />
+                    {stemZipBusy ? 'Packaging…' : 'Audio Stems (.ZIP)'}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleReset}
@@ -1088,8 +1260,41 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Download Link */}
-                      <div className="flex items-center justify-end">
+                      {/* Separated-audio (WAV) drag token — real stems from HTDemucs */}
+                      {conversionResult.separationSessionId && APP_TO_DEMUCS[stemResult.stem] && (
+                        <div
+                          draggable="true"
+                          onDragStart={(e) => handleStemWavDragStart(e, stemResult.stem)}
+                          onPointerEnter={() => void ensureStemWav(conversionResult, stemResult.stem)}
+                          className="w-full p-3 rounded-lg bg-neutral-950 border border-neutral-800 hover:border-neutral-600 transition-all cursor-grab active:cursor-grabbing flex items-center justify-between select-none"
+                        >
+                          <div className="flex items-center gap-2.5 truncate">
+                            <FileAudio className="w-4 h-4 shrink-0 text-amber-400" />
+                            <span className="text-xs font-mono text-neutral-200 truncate">
+                              {stemResult.midiFileName.replace(/\.mid$/, '.wav')}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 text-neutral-400 group-hover/card:text-neutral-200 transition-colors shrink-0">
+                            <span className="text-[11px] hidden sm:inline">
+                              {stemWavReady.has(stemResult.stem) ? 'Drag out' : 'WAV'}
+                            </span>
+                            <GripHorizontal className="w-4 h-4 text-neutral-500" />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Download Links */}
+                      <div className="flex items-center justify-end gap-3">
+                        {conversionResult.separationSessionId && APP_TO_DEMUCS[stemResult.stem] && (
+                          <button
+                            type="button"
+                            onClick={() => handleStemWavDownload(stemResult.stem)}
+                            className="text-xs text-neutral-400 hover:text-neutral-200 transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            <Download className="w-3 h-3" />
+                            Download .WAV
+                          </button>
+                        )}
                         <a
                           href={stemResult.blobUrl}
                           download={stemResult.midiFileName}
@@ -1310,6 +1515,56 @@ export default function App() {
                 className="px-4 py-2 text-xs font-medium text-neutral-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors"
               >
                 Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Separator model license + download consent */}
+      {modelConsentResolver && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-md bg-neutral-900 border border-neutral-700 rounded-2xl p-6 space-y-4 shadow-2xl">
+            <div>
+              <h3 className="text-sm font-bold text-neutral-100">
+                Download the stem separator model?
+              </h3>
+              <p className="text-xs text-neutral-400 mt-2 leading-relaxed">
+                Splitting a track into real Piano, Guitar, Bass, Lead and Drums stems
+                uses the <span className="text-neutral-200 font-medium">{SEPARATOR_MODEL.name}</span>{' '}
+                model ({SEPARATOR_MODEL.byline}). It isn't bundled with the app: with
+                your agreement it downloads once — about {SEPARATOR_MODEL.sizeMB} MB —
+                is verified against a pinned checksum, and stays on this machine.
+                Future versions of the model download the same way, once per version.
+              </p>
+              <p className="text-xs text-neutral-400 mt-2 leading-relaxed">
+                License:{' '}
+                <a
+                  href={SEPARATOR_MODEL.licenseUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-emerald-400 hover:text-emerald-300 underline underline-offset-2"
+                >
+                  {SEPARATOR_MODEL.licenseName}
+                </a>{' '}
+                — free to use, including commercially. Without the model, only the
+                Full Mix transcription can run; the named stems are never faked.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => settleModelConsent(false)}
+                className="px-4 py-2 text-xs font-medium text-neutral-300 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 rounded-lg transition-colors cursor-pointer"
+              >
+                Not now
+              </button>
+              <button
+                type="button"
+                onClick={() => settleModelConsent(true)}
+                className="px-4 py-2 text-xs font-semibold text-neutral-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors cursor-pointer"
+              >
+                Agree &amp; Download
               </button>
             </div>
           </div>

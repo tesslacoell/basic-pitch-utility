@@ -10,11 +10,15 @@ An audio-to-MIDI converter and instrument stem extractor powered by **Spotify's 
 - **Direct Drag & Drop Workflow**:
   - **Drag In**: Accepts MP3, WAV, FLAC, OGG, M4A, and AIFF audio files.
   - **Drag Out**: Native OS file drag-out allows dropping generated `.mid` files directly onto DAW instrument tracks and desktop folders.
-- **Polyphonic Multi-Stem Extraction**:
+- **Real Stem Separation (HTDemucs 6s)**:
+  - Each track is separated by Meta's HTDemucs 6-stem model before anything is transcribed — the Piano, Guitar, Bass, Lead and Drums MIDI is transcribed from that instrument's own separated stem, never from a filtered copy of the mix.
   - 🎹 **Piano & Keyboards**: Chords, electric keys, organs, and harmonic mid-range.
   - 🎸 **Guitars**: Acoustic/electric strums, picking, and guitar body resonance.
-  - 🎸 **Bass**: Low-end fundamental basslines, electric bass, and synth bass (30 Hz – 280 Hz).
+  - 🎸 **Bass**: Low-end fundamental basslines, electric bass, and synth bass.
   - 🎤 **Lead & Vocals**: Melodic top-lines, vocal contours, and pitch bends.
+  - 🥁 **Drums**: Kick, snare, hats and toms transcribed from the separated drums stem.
+  - **Separated audio out, too**: every separated stem can be downloaded or dragged out as a 24-bit WAV, individually or as an **Audio Stems (.ZIP)**.
+  - The model (~130 MB, MIT license) is **not bundled** with the app. The first time you separate, the app shows the license and, with your agreement, downloads the model once and verifies it against a pinned checksum; it re-downloads only when the model version changes.
 - **Combined Master Multi-Track MIDI**:
   - Automatically exports all extracted stems arranged onto separate MIDI channels (Ch 1: Piano, Ch 2: Guitars, Ch 3: Bass, Ch 4: Lead) in a single master `.mid` file.
 - **Built-in Audition & Visualizer**:

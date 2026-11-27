@@ -19,6 +19,8 @@ import {
   writeNotesToTrack,
   buildMidiBytesAtTempo,
 } from './midiExport';
+import { separateMasterBuffer, SeparationOutcome } from './separationService';
+import type { DemucsProgress } from '../types/electron';
 
 export type InferenceBackendMode = 'auto' | 'cpu' | 'webgl';
 
@@ -89,6 +91,12 @@ export interface ConversionOptions {
    * Default 'off' — a judgment call, never applied silently.
    */
   keyMapping?: 'off' | 'snap' | 'drop';
+  /**
+   * Called when a conversion needs the HTDemucs separator model and it
+   * is not downloaded yet. The UI shows the license and asks; resolve
+   * true to agree + download, false to abort the conversion.
+   */
+  onSeparatorModelNeeded?: () => Promise<boolean>;
 }
 
 export interface TrackAnalysis {
@@ -103,6 +111,8 @@ export interface MultiStemConversionResult {
   originalFileName: string;
   durationSeconds: number;
   analysis: TrackAnalysis;
+  /** Separator session holding this conversion's true stem WAVs (main process). Null when no named stems were requested. */
+  separationSessionId: string | null;
   stems: StemResult[];
   allStemsMidi: {
     midiBytes: Uint8Array;
@@ -292,6 +302,35 @@ export async function convertAudioToStems(
   const durationSeconds = Math.round(masterBuffer.duration * 10) / 10;
   const stemResults: StemResult[] = [];
 
+  // 3a. Separate the master into true stems with HTDemucs 6s — once,
+  // before any transcription. Named stems are only ever transcribed
+  // from the separator's output; there is no filter-bank fallback.
+  const needsSeparation = stemsToProcess.some((s) => s !== 'full_mix');
+  let separation: SeparationOutcome | null = null;
+  if (needsSeparation) {
+    let downloadSeen = false;
+    separation = await separateMasterBuffer(masterBuffer, stemsToProcess, {
+      onModelNeeded: options.onSeparatorModelNeeded ?? (async () => false),
+      onProgress: (p: DemucsProgress) => {
+        if (p.phase === 'download') {
+          downloadSeen = true;
+          const frac = p.totalBytes ? (p.receivedBytes ?? 0) / p.totalBytes : 0;
+          onProgress(
+            10 + Math.round(5 * frac),
+            `Downloading separator model (one-time, ${Math.round(frac * 100)}%)...`
+          );
+        } else {
+          const frac = p.chunks ? (p.chunk ?? 0) / p.chunks : 0;
+          const base = downloadSeen ? 15 : 10;
+          onProgress(
+            base + Math.round((30 - base) * frac),
+            `Separating stems with HTDemucs (${p.chunk}/${p.chunks})...`
+          );
+        }
+      },
+    });
+  }
+
   // 3. Analyse the master audio: tempo (for the MIDI header) and key.
   onProgress(9, 'Detecting tempo & key...');
   const tempoResult = options.bpm ? null : detectTempoFromBuffer(masterBuffer);
@@ -309,16 +348,17 @@ export async function convertAudioToStems(
 
   // Allocate progress percentage per stem
   const totalStems = stemsToProcess.length;
-  const progressPerStem = 82 / totalStems; // From 10% to 92%
+  const stemsBasePct = needsSeparation ? 30 : 10;
+  const progressPerStem = (92 - stemsBasePct) / totalStems;
 
   for (let sIdx = 0; sIdx < totalStems; sIdx++) {
     const stemType = stemsToProcess[sIdx];
     const def = STEM_DEFINITIONS[stemType];
-    const stemBasePct = 10 + sIdx * progressPerStem;
+    const stemBasePct = stemsBasePct + sIdx * progressPerStem;
 
     onProgress(
       Math.round(stemBasePct),
-      `Isolating ${def.name} stem (${sIdx + 1}/${totalStems})...`
+      `Preparing ${def.name} stem (${sIdx + 1}/${totalStems})...`
     );
 
     const isDrums = stemType === 'drums';
@@ -326,14 +366,17 @@ export async function convertAudioToStems(
 
     if (isDrums) {
       // Drums are unpitched: the pitch model cannot transcribe them. Use
-      // band-split onset detection on the master instead and hand the shared
-      // writing passes below a NoteEvent-shaped list (GM drum numbers in
-      // place of pitches, on the channel-10 definition).
+      // band-split onset detection on the SEPARATED drums stem (it no
+      // longer has to fight the rest of the mix) and hand the shared
+      // writing passes below a NoteEvent-shaped list (GM drum numbers
+      // in place of pitches, on the channel-10 definition).
       onProgress(
         Math.round(stemBasePct + progressPerStem * 0.4),
         'Transcribing drums from transients...'
       );
-      timedNotes = transcribeDrumsFromBuffer(masterBuffer).map((ev) => ({
+      const drumsBuffer = separation?.buffers.get('drums');
+      if (!drumsBuffer) throw new Error('The separator did not return a drums stem.');
+      timedNotes = transcribeDrumsFromBuffer(drumsBuffer).map((ev) => ({
         pitchMidi: ev.midi,
         startTimeSeconds: ev.time,
         durationSeconds: ev.duration,
@@ -341,8 +384,14 @@ export async function convertAudioToStems(
         pitchBends: undefined,
       }));
     } else {
-    // Isolate & resample stem to 22.05 kHz mono
-    const stemBuffer = await isolateStemAudioBuffer(masterBuffer, stemType);
+    // The stem's 22.05 kHz mono analysis buffer: rendered from the
+    // master for Full Mix, produced by the HTDemucs separator for
+    // every named stem.
+    const stemBuffer =
+      stemType === 'full_mix'
+        ? await isolateStemAudioBuffer(masterBuffer, stemType)
+        : separation?.buffers.get(stemType);
+    if (!stemBuffer) throw new Error(`The separator did not return a ${stemType} stem.`);
 
     // Evaluate model for this stem with automatic CPU fallback if WebGL shader compilation fails
     const { frames, onsets, contours } = await evaluateModelWithFallback(
@@ -531,6 +580,7 @@ export async function convertAudioToStems(
     originalFileName,
     durationSeconds,
     analysis,
+    separationSessionId: separation?.sessionId ?? null,
     stems: stemResults,
     allStemsMidi: {
       midiBytes: masterBytes,

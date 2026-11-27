@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, nativeImage } = require('electron')
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const separator = require('./separator.cjs');
 
 // Chromium WebGL & GPU hardware acceleration switches
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
@@ -116,6 +117,84 @@ ipcMain.handle('save-midi-file', async (event, { fileName, base64Data }) => {
     return { canceled: false, filePath };
   }
   return { canceled: true };
+});
+
+// --- HTDemucs stem separator -------------------------------------------
+// The model is NOT bundled with the app. It is downloaded once (after
+// the user agrees to its license in the UI) into userData/models and
+// verified against a pinned SHA-256. Separation sessions live under the
+// temp dir; only the newest session is kept.
+
+function modelsDir() {
+  return path.join(app.getPath('userData'), 'models');
+}
+
+function sessionsRoot() {
+  return path.join(tempDir, 'demucs-sessions');
+}
+
+function sendDemucsProgress(event, progress) {
+  try {
+    event.sender.send('demucs-progress', progress);
+  } catch {
+    // window gone mid-run; the work itself is unaffected
+  }
+}
+
+ipcMain.handle('demucs-model-status', async () => {
+  return separator.getModelStatus(modelsDir());
+});
+
+ipcMain.handle('demucs-download-model', async (event) => {
+  await separator.downloadModel(modelsDir(), (p) => sendDemucsProgress(event, p));
+  return separator.getModelStatus(modelsDir());
+});
+
+ipcMain.handle('demucs-separate', async (event, { wavBase64, wantStems }) => {
+  const root = sessionsRoot();
+  fs.mkdirSync(root, { recursive: true });
+  // Reap older sessions — only the latest conversion's stems are kept.
+  for (const entry of fs.readdirSync(root)) {
+    fs.rmSync(path.join(root, entry), { recursive: true, force: true });
+  }
+  const sessionId = `s${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+  const sessionDir = path.join(root, sessionId);
+  fs.mkdirSync(sessionDir, { recursive: true });
+
+  const inputPath = path.join(sessionDir, 'master.wav');
+  fs.writeFileSync(inputPath, Buffer.from(wavBase64, 'base64'));
+
+  const result = await separator.separate(
+    modelsDir(),
+    inputPath,
+    sessionDir,
+    Array.isArray(wantStems) ? wantStems : [],
+    (p) => sendDemucsProgress(event, p)
+  );
+  fs.unlinkSync(inputPath);
+
+  // Ship analysis samples as raw bytes (structured clone copies them).
+  const analysis = {};
+  for (const [stem, samples] of Object.entries(result.analysis)) {
+    analysis[stem] = Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength);
+  }
+  return {
+    sessionId,
+    durationSeconds: result.durationSeconds,
+    analysisSampleRate: result.analysisSampleRate,
+    analysis,
+    wavFiles: result.wavFiles,
+  };
+});
+
+ipcMain.handle('demucs-read-stem-wav', async (_event, { sessionId, demucsStem }) => {
+  const fileName = separator.DEMUCS_STEMS.includes(demucsStem) ? `${demucsStem}.wav` : null;
+  if (!fileName || !/^s[a-z0-9]+$/.test(sessionId)) {
+    throw new Error('Unknown separation session or stem.');
+  }
+  const filePath = path.join(sessionsRoot(), sessionId, fileName);
+  const data = fs.readFileSync(filePath);
+  return { base64Data: data.toString('base64') };
 });
 
 app.whenReady().then(() => {
