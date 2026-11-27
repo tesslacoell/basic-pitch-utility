@@ -231,6 +231,23 @@ if (shouldRun) {
     process.exit(runResult.status || 1);
   }
 } else if (shouldPackage) {
+  // The app icon is generated, never committed (build/ is gitignored),
+  // so a fresh clone has no build/icon.png and electron-builder would
+  // silently fall back to the default Electron icon. Regenerate it on
+  // demand — the generator is dependency-free Node (make-icon.mjs).
+  const iconPath = path.join(ROOT_DIR, 'build', 'icon.png');
+  if (!fs.existsSync(iconPath)) {
+    log('App icon not found (fresh clone?) — generating build/icon.png...');
+    const iconResult = spawnSync('node', [path.join(ROOT_DIR, 'scripts', 'make-icon.mjs')], {
+      cwd: ROOT_DIR,
+      stdio: 'inherit',
+      shell: true,
+    });
+    if (iconResult.status !== 0) {
+      warn('Icon generation failed; packaging will fall back to the default Electron icon.');
+    }
+  }
+
   log(`Packaging standalone native installer for ${colors.bright}${colors.green}${osName}${colors.reset} (${targetFlag})...`);
   log('Running electron-builder (this creates standalone .dmg / .exe / .AppImage)...');
 
