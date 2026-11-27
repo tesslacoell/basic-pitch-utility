@@ -13,6 +13,7 @@ import { detectKeyFromBuffer, KeyDetectionResult } from './keyDetection';
 import { insertKeySignatureMetaEvent } from './midiMeta';
 import { cleanupStemNotes } from './noteCleanup';
 import { applyKeyMapping, countOutOfKey } from './keyMapping';
+import { transcribeDrumsFromBuffer } from './drumTranscription';
 
 export type InferenceBackendMode = 'auto' | 'cpu' | 'webgl';
 
@@ -285,7 +286,7 @@ export async function convertAudioToStems(
   options: ConversionOptions = {}
 ): Promise<MultiStemConversionResult> {
   const baseName = originalFileName.replace(/\.[^/.]+$/, '').trim() || 'transcription';
-  const stemsToProcess = selectedStems.length > 0 ? selectedStems : (['piano', 'guitar', 'bass', 'lead'] as StemType[]);
+  const stemsToProcess = selectedStems.length > 0 ? selectedStems : (['piano', 'guitar', 'bass', 'lead', 'drums'] as StemType[]);
 
   // 1. Read audio bytes
   onProgress(2, 'Reading audio file...');
@@ -338,6 +339,26 @@ export async function convertAudioToStems(
       `Isolating ${def.name} stem (${sIdx + 1}/${totalStems})...`
     );
 
+    const isDrums = stemType === 'drums';
+    let timedNotes: ReturnType<typeof noteFramesToTime>;
+
+    if (isDrums) {
+      // Drums are unpitched: the pitch model cannot transcribe them. Use
+      // band-split onset detection on the master instead and hand the shared
+      // writing passes below a NoteEvent-shaped list (GM drum numbers in
+      // place of pitches, on the channel-10 definition).
+      onProgress(
+        Math.round(stemBasePct + progressPerStem * 0.4),
+        'Transcribing drums from transients...'
+      );
+      timedNotes = transcribeDrumsFromBuffer(masterBuffer).map((ev) => ({
+        pitchMidi: ev.midi,
+        startTimeSeconds: ev.time,
+        durationSeconds: ev.duration,
+        amplitude: ev.velocity,
+        pitchBends: undefined,
+      }));
+    } else {
     // Isolate & resample stem to 22.05 kHz mono
     const stemBuffer = await isolateStemAudioBuffer(masterBuffer, stemType);
 
@@ -397,7 +418,8 @@ export async function convertAudioToStems(
     }
 
     const notesWithBends = addPitchBendsToNoteEvents(contours, rawNotes);
-    const timedNotes = noteFramesToTime(notesWithBends);
+    timedNotes = noteFramesToTime(notesWithBends);
+    }
 
     // Create standalone single-stem MIDI
     const singleMidi = new Midi();
@@ -431,16 +453,19 @@ export async function convertAudioToStems(
 
     // Pass 2: cleanup (harmonic shadows, monophony, fragment merging) —
     // applied BEFORE anything is written, so the exported MIDI, the stats
-    // and the piano roll all show the same cleaned part.
+    // and the piano roll all show the same cleaned part. Drums bypass it:
+    // pitched-note rules are meaningless for GM drum events.
     let finalNotes =
-      options.cleanup === false ? parsedNotes : cleanupStemNotes(parsedNotes, stemType);
+      isDrums || options.cleanup === false ? parsedNotes : cleanupStemNotes(parsedNotes, stemType);
 
     // Pass 2.5: count out-of-key notes against the detected key, and apply
-    // key mapping only when the user explicitly asked for it.
-    const outOfKeyCount = analysis.key
-      ? countOutOfKey(finalNotes, analysis.key.tonic, analysis.key.mode)
-      : null;
-    if (options.keyMapping && options.keyMapping !== 'off' && analysis.key) {
+    // key mapping only when the user explicitly asked for it. (Drums have
+    // no key — their "notes" are drum-map numbers, not pitches.)
+    const outOfKeyCount =
+      !isDrums && analysis.key
+        ? countOutOfKey(finalNotes, analysis.key.tonic, analysis.key.mode)
+        : null;
+    if (!isDrums && options.keyMapping && options.keyMapping !== 'off' && analysis.key) {
       finalNotes = applyKeyMapping(finalNotes, analysis.key.tonic, analysis.key.mode, options.keyMapping);
       finalNotes.forEach((n) => {
         n.pitchName = midiToNoteName(n.midi);
@@ -474,7 +499,11 @@ export async function convertAudioToStems(
 
     const lowestNote = minMidi <= 127 ? midiToNoteName(minMidi) : '—';
     const highestNote = maxMidi >= 0 ? midiToNoteName(maxMidi) : '—';
-    const pitchRange = minMidi <= maxMidi ? `${lowestNote} to ${highestNote}` : 'None';
+    const pitchRange = isDrums
+      ? 'Kick · Snare · Hats · Toms (GM map)'
+      : minMidi <= maxMidi
+        ? `${lowestNote} to ${highestNote}`
+        : 'None';
 
     stemResults.push({
       stem: stemType,

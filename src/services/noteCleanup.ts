@@ -111,6 +111,19 @@ export const STEM_CLEANUP: Record<StemType, CleanupConfig> = {
     onsetCoincidence: 0.03,
     monophonic: false,
   },
+  // Drums bypass cleanup entirely in the conversion service (this entry only
+  // completes the Record): pitched-note rules — harmonic pruning, fragment
+  // merging, key logic — are meaningless for unpitched GM drum events.
+  drums: {
+    minVelocity: 0,
+    minNoteLength: 0,
+    mergeGap: 0,
+    harmonicPruning: false,
+    harmonicVelocityRatio: 1,
+    harmonicMaxDurationRatio: 1,
+    onsetCoincidence: 0.03,
+    monophonic: false,
+  },
 };
 
 // Semitone offsets of the 2nd, 3rd and 4th harmonics above a fundamental.

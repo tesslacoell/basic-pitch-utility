@@ -39,7 +39,7 @@ import { PianoRoll } from './components/PianoRoll';
 
 type AppState = 'idle' | 'converting' | 'completed' | 'error';
 
-const AVAILABLE_STEMS: StemType[] = ['full_mix', 'piano', 'guitar', 'bass', 'lead'];
+const AVAILABLE_STEMS: StemType[] = ['full_mix', 'piano', 'guitar', 'bass', 'lead', 'drums'];
 
 export default function App() {
   const [state, setState] = useState<AppState>('idle');
@@ -63,12 +63,12 @@ export default function App() {
 
   // Selected stems for extraction
   const [selectedStems, setSelectedStems] = useState<Set<StemType>>(
-    new Set(['full_mix', 'piano', 'guitar', 'bass', 'lead'])
+    new Set(['full_mix', 'piano', 'guitar', 'bass', 'lead', 'drums'])
   );
 
   // Active audible stems in synth player / piano roll
   const [activeAuditionStems, setActiveAuditionStems] = useState<Set<StemType>>(
-    new Set(['full_mix', 'piano', 'guitar', 'bass', 'lead'])
+    new Set(['full_mix', 'piano', 'guitar', 'bass', 'lead', 'drums'])
   );
 
   // Filter for PianoRoll view
@@ -108,7 +108,7 @@ export default function App() {
   };
 
   const selectAllStems = () => {
-    setSelectedStems(new Set(['full_mix', 'piano', 'guitar', 'bass', 'lead']));
+    setSelectedStems(new Set(['full_mix', 'piano', 'guitar', 'bass', 'lead', 'drums']));
   };
 
   const handleSetEngine = (mode: InferenceBackendMode) => {
@@ -521,7 +521,7 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
                 {AVAILABLE_STEMS.map((stemId) => {
                   const def = STEM_DEFINITIONS[stemId];
                   const isSelected = selectedStems.has(stemId);

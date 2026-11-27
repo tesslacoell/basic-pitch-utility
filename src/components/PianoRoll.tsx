@@ -131,7 +131,8 @@ export function PianoRoll({
       ctx.fill();
       ctx.shadowBlur = 0;
 
-      const outOfKey = scale !== null && !scale.has(((note.midi % 12) + 12) % 12);
+      const outOfKey =
+        scale !== null && note.stem !== 'drums' && !scale.has(((note.midi % 12) + 12) % 12);
       if (outOfKey) {
         ctx.strokeStyle = '#ef4444';
         ctx.lineWidth = 1.5;

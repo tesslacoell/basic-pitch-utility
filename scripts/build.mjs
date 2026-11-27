@@ -58,6 +58,7 @@ const args = process.argv.slice(2);
 const isCleanCommand = args.includes('clean') || args.includes('--clean');
 const shouldRun = args.includes('--run') || args.includes('run');
 const onlyWeb = args.includes('--web') || args.includes('web');
+const packageAll = args.includes('--all') || args.includes('all');
 const hasExplicitPackage = args.includes('--package') || args.includes('package');
 const hasExplicitBuild = args.includes('--build') || args.includes('build');
 const onlyClean = isCleanCommand && !shouldRun && !hasExplicitPackage && !hasExplicitBuild && !onlyWeb;
@@ -121,6 +122,15 @@ if (platform === 'darwin') {
   } catch {}
   osDetails = `${os.type()} ${arch}${distro}`;
   targetFlag = '--linux';
+}
+
+// 'all' packages every target this host can cross-build: on macOS that is
+// the native Mac build plus the Windows build (electron-builder cross-builds
+// the NSIS installer and portable .exe; Wine is only needed to stamp the
+// .exe icon/metadata, without it the .exe ships with a default icon).
+if (packageAll && platform === 'darwin') {
+  targetFlag = '--mac --win';
+  log('Packaging ALL targets: macOS + Windows (cross-build)');
 }
 
 log(`Detected Host OS: ${colors.bright}${colors.green}${osName}${colors.reset} [${osDetails}]`);

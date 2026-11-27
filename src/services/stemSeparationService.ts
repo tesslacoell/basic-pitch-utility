@@ -4,7 +4,7 @@
  * prior to Spotify Basic Pitch neural network inference.
  */
 
-export type StemType = 'piano' | 'guitar' | 'bass' | 'lead' | 'full_mix';
+export type StemType = 'piano' | 'guitar' | 'bass' | 'lead' | 'full_mix' | 'drums';
 
 export interface StemDefinition {
   id: StemType;
@@ -128,6 +128,26 @@ export const STEM_DEFINITIONS: Record<StemType, StemDefinition> = {
       onsetThresh: 0.5,
       frameThresh: 0.3,
       minNoteLen: 5,
+      melodiaTrick: false,
+      energyTolerance: 11,
+    },
+  },
+  drums: {
+    id: 'drums',
+    name: 'Drums',
+    shortName: 'Drums',
+    description: 'Kick, snare, hats & toms transcribed from transients (GM drum map, ch. 10). Also sharpens tempo detection.',
+    color: '#a3e635', // lime
+    badgeBg: 'bg-lime-950/40',
+    badgeBorder: 'border-lime-800/60',
+    badgeText: 'text-lime-300',
+    midiProgram: 0, // ignored on the drum channel
+    channel: 9, // MIDI channel 10 — the General MIDI drum channel
+    // Unused: drums are transcribed by onset detection, not the pitch model.
+    pitchParams: {
+      onsetThresh: 0.5,
+      frameThresh: 0.3,
+      minNoteLen: 1,
       melodiaTrick: false,
       energyTolerance: 11,
     },
