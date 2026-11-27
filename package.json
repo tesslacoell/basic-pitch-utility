@@ -1,7 +1,7 @@
 {
-  "name": "react-example",
+  "name": "basic-pitch-midi",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
@@ -22,7 +22,7 @@
     "@google/genai": "^2.4.0",
     "@spotify/basic-pitch": "^1.0.1",
     "@tailwindcss/vite": "^4.3.3",
-    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs": "^3.21.0",
     "@tonejs/midi": "^2.0.28",
     "@types/jszip": "^3.4.0",
     "@vitejs/plugin-react": "^6.1.1",
@@ -60,6 +60,7 @@
     ],
     "mac": {
       "category": "public.app-category.music",
+      "icon": "build/icon.png",
       "target": ["dmg", "zip"]
     },
     "win": {

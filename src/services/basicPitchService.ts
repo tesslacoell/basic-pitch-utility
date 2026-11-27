@@ -8,6 +8,11 @@ import {
   isolateStemAudioBuffer,
   StemDefinition,
 } from './stemSeparationService';
+import { detectTempoFromBuffer, TempoDetectionResult } from './tempoDetection';
+import { detectKeyFromBuffer, KeyDetectionResult } from './keyDetection';
+import { insertKeySignatureMetaEvent } from './midiMeta';
+import { cleanupStemNotes } from './noteCleanup';
+import { applyKeyMapping, countOutOfKey } from './keyMapping';
 
 export type InferenceBackendMode = 'auto' | 'cpu' | 'webgl';
 
@@ -50,6 +55,10 @@ export interface StemResult {
   notes: TranscribedNote[];
   stats: {
     noteCount: number;
+    /** Note count before the cleanup stage ran. */
+    rawNoteCount: number;
+    /** Notes outside the detected key (after cleanup, before any key mapping). Null when no key was detected. */
+    outOfKeyCount: number | null;
     durationSeconds: number;
     pitchRange: string;
     lowestNote: string;
@@ -57,9 +66,37 @@ export interface StemResult {
   };
 }
 
+export interface ConversionOptions {
+  /**
+   * Tempo to write into the exported MIDI. When omitted, tempo is detected
+   * from the audio; if detection fails, 120 BPM is used as a last resort
+   * (and flagged as 'fallback' in the result analysis).
+   */
+  bpm?: number;
+  /** Run key detection and write a key_signature meta event. Default true. */
+  detectKeySignature?: boolean;
+  /** Run the note cleanup stage (harmonic pruning, monophony, merging). Default true. */
+  cleanup?: boolean;
+  /**
+   * Force notes into the detected key: 'snap' moves out-of-key notes one
+   * semitone into the scale, 'drop' deletes short out-of-key notes.
+   * Default 'off' — a judgment call, never applied silently.
+   */
+  keyMapping?: 'off' | 'snap' | 'drop';
+}
+
+export interface TrackAnalysis {
+  /** Tempo actually used for the export, in BPM. */
+  bpm: number;
+  bpmSource: 'manual' | 'detected' | 'fallback';
+  tempo: TempoDetectionResult | null;
+  key: KeyDetectionResult | null;
+}
+
 export interface MultiStemConversionResult {
   originalFileName: string;
   durationSeconds: number;
+  analysis: TrackAnalysis;
   stems: StemResult[];
   allStemsMidi: {
     midiBytes: Uint8Array;
@@ -215,13 +252,37 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
 }
 
 /**
+ * Stamps a Midi file with the track's tempo. MUST be called before notes
+ * are added: @tonejs/midi converts note times from seconds to ticks
+ * through the header's tempo map, so a header set after notes exist
+ * cannot repair their tick positions. This is the fix for the historical
+ * bug where every export silently assumed 120 BPM and stretched ~1.22x
+ * against a 98 BPM song.
+ */
+function applyHeaderMetadata(midi: Midi, bpm: number): void {
+  midi.header.setTempo(bpm);
+}
+
+/**
+ * Serialises a Midi file and splices in the key_signature meta event.
+ * (The event is added at the byte level, not via @tonejs/midi's header,
+ * because that library's key-signature encoder is broken — see
+ * midiMeta.ts.)
+ */
+function finalizeMidiBytes(midi: Midi, key: KeyDetectionResult | null): Uint8Array {
+  const bytes = midi.toArray();
+  return key ? insertKeySignatureMetaEvent(bytes, key.midiSharps, key.mode) : bytes;
+}
+
+/**
  * Converts audio into one or multiple instrument stems using Spotify Basic Pitch
  */
 export async function convertAudioToStems(
   fileOrBlob: File | Blob,
   originalFileName: string,
   selectedStems: StemType[],
-  onProgress: (percent: number, statusText: string) => void
+  onProgress: (percent: number, statusText: string) => void,
+  options: ConversionOptions = {}
 ): Promise<MultiStemConversionResult> {
   const baseName = originalFileName.replace(/\.[^/.]+$/, '').trim() || 'transcription';
   const stemsToProcess = selectedStems.length > 0 ? selectedStems : (['piano', 'guitar', 'bass', 'lead'] as StemType[]);
@@ -248,9 +309,20 @@ export async function convertAudioToStems(
   const durationSeconds = Math.round(masterBuffer.duration * 10) / 10;
   const stemResults: StemResult[] = [];
 
+  // 3. Analyse the master audio: tempo (for the MIDI header) and key.
+  onProgress(9, 'Detecting tempo & key...');
+  const tempoResult = options.bpm ? null : detectTempoFromBuffer(masterBuffer);
+  const analysis: TrackAnalysis = {
+    bpm: options.bpm ?? tempoResult?.bpm ?? 120,
+    bpmSource: options.bpm ? 'manual' : tempoResult ? 'detected' : 'fallback',
+    tempo: tempoResult,
+    key: options.detectKeySignature === false ? null : detectKeyFromBuffer(masterBuffer),
+  };
+
   // Master multi-track MIDI file containing all extracted stems on separate channels/tracks
   const masterMidi = new Midi();
   masterMidi.name = `${baseName} (All Stems)`;
+  applyHeaderMetadata(masterMidi, analysis.bpm);
 
   // Allocate progress percentage per stem
   const totalStems = stemsToProcess.length;
@@ -330,6 +402,7 @@ export async function convertAudioToStems(
     // Create standalone single-stem MIDI
     const singleMidi = new Midi();
     singleMidi.name = `${baseName} - ${def.shortName}`;
+    applyHeaderMetadata(singleMidi, analysis.bpm);
     const singleTrack = singleMidi.addTrack();
     singleTrack.name = def.name;
     singleTrack.channel = def.channel;
@@ -341,54 +414,59 @@ export async function convertAudioToStems(
     masterTrack.channel = def.channel;
     masterTrack.instrument.number = def.midiProgram;
 
+    // Pass 1: normalise the model's raw output into TranscribedNotes.
     const parsedNotes: TranscribedNote[] = [];
-    let minMidi = 128;
-    let maxMidi = -1;
-
     timedNotes.forEach((n) => {
       const pitch = Math.round(n.pitchMidi);
-      if (pitch < minMidi) minMidi = pitch;
-      if (pitch > maxMidi) maxMidi = pitch;
-
-      const duration = Math.max(0.05, n.durationSeconds);
-      const velocity = Math.max(0.2, Math.min(1.0, n.amplitude || 0.8));
-
-      // Add to single-stem MIDI track
-      singleTrack.addNote({
-        midi: pitch,
-        time: n.startTimeSeconds,
-        duration,
-        velocity,
-      });
-
-      // Add to master multi-track MIDI
-      masterTrack.addNote({
-        midi: pitch,
-        time: n.startTimeSeconds,
-        duration,
-        velocity,
-      });
-
-      if (n.pitchBends && n.pitchBends.length > 0) {
-        n.pitchBends.forEach((bend, bIdx) => {
-          const bendTime = n.startTimeSeconds + (bIdx * duration) / n.pitchBends!.length;
-          singleTrack.addPitchBend({ time: bendTime, value: bend });
-          masterTrack.addPitchBend({ time: bendTime, value: bend });
-        });
-      }
-
       parsedNotes.push({
         midi: pitch,
         pitchName: midiToNoteName(pitch),
         startTime: n.startTimeSeconds,
-        duration,
-        velocity,
+        duration: Math.max(0.05, n.durationSeconds),
+        velocity: Math.max(0.2, Math.min(1.0, n.amplitude || 0.8)),
         pitchBends: n.pitchBends,
         stem: stemType,
       });
     });
 
-    const singleBytes = singleMidi.toArray();
+    // Pass 2: cleanup (harmonic shadows, monophony, fragment merging) —
+    // applied BEFORE anything is written, so the exported MIDI, the stats
+    // and the piano roll all show the same cleaned part.
+    let finalNotes =
+      options.cleanup === false ? parsedNotes : cleanupStemNotes(parsedNotes, stemType);
+
+    // Pass 2.5: count out-of-key notes against the detected key, and apply
+    // key mapping only when the user explicitly asked for it.
+    const outOfKeyCount = analysis.key
+      ? countOutOfKey(finalNotes, analysis.key.tonic, analysis.key.mode)
+      : null;
+    if (options.keyMapping && options.keyMapping !== 'off' && analysis.key) {
+      finalNotes = applyKeyMapping(finalNotes, analysis.key.tonic, analysis.key.mode, options.keyMapping);
+      finalNotes.forEach((n) => {
+        n.pitchName = midiToNoteName(n.midi);
+      });
+    }
+
+    // Pass 3: write the surviving notes to both MIDI files.
+    let minMidi = 128;
+    let maxMidi = -1;
+    finalNotes.forEach((n) => {
+      if (n.midi < minMidi) minMidi = n.midi;
+      if (n.midi > maxMidi) maxMidi = n.midi;
+
+      singleTrack.addNote({ midi: n.midi, time: n.startTime, duration: n.duration, velocity: n.velocity });
+      masterTrack.addNote({ midi: n.midi, time: n.startTime, duration: n.duration, velocity: n.velocity });
+
+      if (n.pitchBends && n.pitchBends.length > 0) {
+        n.pitchBends.forEach((bend, bIdx) => {
+          const bendTime = n.startTime + (bIdx * n.duration) / n.pitchBends!.length;
+          singleTrack.addPitchBend({ time: bendTime, value: bend });
+          masterTrack.addPitchBend({ time: bendTime, value: bend });
+        });
+      }
+    });
+
+    const singleBytes = finalizeMidiBytes(singleMidi, analysis.key);
     const singleBlob = new Blob([singleBytes.buffer as ArrayBuffer], { type: 'audio/midi' });
     const singleBlobUrl = URL.createObjectURL(singleBlob);
     const singleDataUrl = `data:audio/midi;base64,${uint8ArrayToBase64(singleBytes)}`;
@@ -407,9 +485,11 @@ export async function convertAudioToStems(
       midiBlob: singleBlob,
       blobUrl: singleBlobUrl,
       dataUrl: singleDataUrl,
-      notes: parsedNotes,
+      notes: finalNotes,
       stats: {
-        noteCount: parsedNotes.length,
+        noteCount: finalNotes.length,
+        rawNoteCount: parsedNotes.length,
+        outOfKeyCount,
         durationSeconds,
         pitchRange,
         lowestNote,
@@ -420,7 +500,7 @@ export async function convertAudioToStems(
 
   // Finalize Master Multi-Track MIDI
   onProgress(94, 'Assembling multi-track master MIDI...');
-  const masterBytes = masterMidi.toArray();
+  const masterBytes = finalizeMidiBytes(masterMidi, analysis.key);
   const masterBlob = new Blob([masterBytes.buffer as ArrayBuffer], { type: 'audio/midi' });
   const masterBlobUrl = URL.createObjectURL(masterBlob);
   const masterDataUrl = `data:audio/midi;base64,${uint8ArrayToBase64(masterBytes)}`;
@@ -448,6 +528,7 @@ export async function convertAudioToStems(
   return {
     originalFileName,
     durationSeconds,
+    analysis,
     stems: stemResults,
     allStemsMidi: {
       midiBytes: masterBytes,

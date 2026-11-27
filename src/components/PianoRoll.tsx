@@ -1,12 +1,16 @@
 import { useEffect, useRef } from 'react';
 import { TranscribedNote } from '../services/basicPitchService';
 import { STEM_DEFINITIONS, StemType } from '../services/stemSeparationService';
+import { scalePitchClasses } from '../services/keyMapping';
+import { KeyMode } from '../services/keyDetection';
 
 interface PianoRollProps {
   notes: TranscribedNote[];
   totalDuration: number;
   currentPlaybackTime?: number;
   activeStems?: Set<StemType>;
+  /** When set, notes outside this key are outlined in red. */
+  keyInfo?: { tonic: number; mode: KeyMode } | null;
 }
 
 export function PianoRoll({
@@ -14,6 +18,7 @@ export function PianoRoll({
   totalDuration,
   currentPlaybackTime = 0,
   activeStems,
+  keyInfo,
 }: PianoRollProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -96,6 +101,9 @@ export function PianoRoll({
       ctx.stroke();
     }
 
+    // Out-of-key highlighting against the detected key, when provided
+    const scale = keyInfo ? scalePitchClasses(keyInfo.tonic, keyInfo.mode) : null;
+
     // Render notes with stem-specific colors
     visibleNotes.forEach((note) => {
       const x = (note.startTime / duration) * width;
@@ -123,8 +131,14 @@ export function PianoRoll({
       ctx.fill();
       ctx.shadowBlur = 0;
 
-      ctx.strokeStyle = isActive ? '#ffffff' : 'rgba(0,0,0,0.4)';
-      ctx.lineWidth = 0.5;
+      const outOfKey = scale !== null && !scale.has(((note.midi % 12) + 12) % 12);
+      if (outOfKey) {
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 1.5;
+      } else {
+        ctx.strokeStyle = isActive ? '#ffffff' : 'rgba(0,0,0,0.4)';
+        ctx.lineWidth = 0.5;
+      }
       ctx.stroke();
     });
 
@@ -143,7 +157,7 @@ export function PianoRoll({
       ctx.arc(scrubX, 4, 3.5, 0, Math.PI * 2);
       ctx.fill();
     }
-  }, [notes, totalDuration, currentPlaybackTime, activeStems]);
+  }, [notes, totalDuration, currentPlaybackTime, activeStems, keyInfo]);
 
   return (
     <div className="w-full h-40 rounded-xl overflow-hidden border border-neutral-800 bg-neutral-950 relative">

@@ -51,6 +51,9 @@ export default function App() {
   const [showStandaloneModal, setShowStandaloneModal] = useState<boolean>(false);
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const [engineMode, setEngineMode] = useState<InferenceBackendMode>('auto');
+  const [manualBpm, setManualBpm] = useState<string>('');
+  const [cleanupEnabled, setCleanupEnabled] = useState<boolean>(true);
+  const [keyMappingMode, setKeyMappingMode] = useState<'off' | 'snap' | 'drop'>('off');
 
   const isElectron = typeof window !== 'undefined' && Boolean(window.electronAPI?.isElectron);
   const isMac =
@@ -126,6 +129,7 @@ export default function App() {
 
       try {
         const stemsArray = Array.from(selectedStems);
+        const parsedBpm = parseFloat(manualBpm);
         const result = await convertAudioToStems(
           file,
           name,
@@ -133,6 +137,11 @@ export default function App() {
           (pct, msg) => {
             setProgress(pct);
             setStatusMessage(msg);
+          },
+          {
+            bpm: Number.isFinite(parsedBpm) && parsedBpm > 0 ? parsedBpm : undefined,
+            cleanup: cleanupEnabled,
+            keyMapping: keyMappingMode,
           }
         );
         setConversionResult(result);
@@ -311,10 +320,17 @@ export default function App() {
     blobUrl: string,
     blob: Blob
   ) => {
-    // 1. If running as standalone Electron desktop app, invoke native OS startDrag
+    // 1. Standalone Electron: hand the drag to the OS via the main process.
+    //    preventDefault() is REQUIRED here (per Electron's native drag &
+    //    drop pattern): without it the renderer also starts an HTML5 drag
+    //    carrying a blob:/DownloadURL payload, which fights the native
+    //    drag and is useless to a DAW — the previous behaviour, where
+    //    drag-out silently failed or delivered nothing the DAW could use.
     if (window.electronAPI?.isElectron) {
+      e.preventDefault();
       const base64Data = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
       window.electronAPI.startDrag({ fileName, base64Data });
+      return;
     }
 
     // 2. Standard HTML5 Chromium DownloadURL & file items for web/embedded
@@ -586,6 +602,48 @@ export default function App() {
                   <span>Adaptive Sensitivity: Active</span>
                 </div>
               </div>
+
+              {/* Tempo & Cleanup */}
+              <div className="mt-3 pt-3 border-t border-neutral-800/60 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+                <label className="flex items-center gap-2 text-neutral-400">
+                  <span className="font-medium text-neutral-300">Tempo (BPM):</span>
+                  <input
+                    type="number"
+                    min="20"
+                    max="300"
+                    step="0.1"
+                    value={manualBpm}
+                    onChange={(e) => setManualBpm(e.target.value)}
+                    placeholder="Auto-detect"
+                    className="w-24 bg-neutral-950 border border-neutral-800 rounded px-2 py-1 text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-emerald-600"
+                  />
+                  <span className="text-[11px] text-neutral-500">written into the MIDI header</span>
+                </label>
+                <label className="flex items-center gap-2 text-neutral-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={cleanupEnabled}
+                    onChange={(e) => setCleanupEnabled(e.target.checked)}
+                    className="accent-emerald-500"
+                  />
+                  <span>
+                    <span className="font-medium text-neutral-300">Note cleanup</span>
+                    <span className="text-[11px] text-neutral-500"> — removes harmonic ghosts, enforces monophony on bass/lead, merges fragments</span>
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 text-neutral-400">
+                  <span className="font-medium text-neutral-300">Key mapping:</span>
+                  <select
+                    value={keyMappingMode}
+                    onChange={(e) => setKeyMappingMode(e.target.value as 'off' | 'snap' | 'drop')}
+                    className="bg-neutral-950 border border-neutral-800 rounded px-2 py-1 text-neutral-200 focus:outline-none focus:border-emerald-600 cursor-pointer"
+                  >
+                    <option value="off">Off (highlight only)</option>
+                    <option value="snap">Snap out-of-key notes into the key</option>
+                    <option value="drop">Drop short out-of-key notes</option>
+                  </select>
+                </label>
+              </div>
             </div>
 
             {/* Quick Testing Options: Samples & Microphone */}
@@ -700,6 +758,32 @@ export default function App() {
                   <span>{conversionResult.stems.length} stems extracted</span>
                   <span aria-hidden="true">·</span>
                   <span className="tabular-nums">{allNotes.length} total notes</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="tabular-nums">
+                    {conversionResult.analysis.bpm} BPM ({conversionResult.analysis.bpmSource})
+                  </span>
+                  {conversionResult.analysis.key && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span>Key: {conversionResult.analysis.key.keyName}</span>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    title="Set the tempo field to half the current BPM (fix a double-time detection), then run the file again"
+                    onClick={() => setManualBpm(String(Math.round(conversionResult.analysis.bpm / 2 * 10) / 10))}
+                    className="px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600 transition-colors cursor-pointer"
+                  >
+                    ÷2
+                  </button>
+                  <button
+                    type="button"
+                    title="Set the tempo field to double the current BPM (fix a half-time detection), then run the file again"
+                    onClick={() => setManualBpm(String(Math.round(conversionResult.analysis.bpm * 2 * 10) / 10))}
+                    className="px-1.5 py-0.5 rounded border border-neutral-800 text-neutral-400 hover:text-neutral-200 hover:border-neutral-600 transition-colors cursor-pointer"
+                  >
+                    ×2
+                  </button>
                 </div>
               </div>
 
@@ -846,7 +930,12 @@ export default function App() {
                               {def.name}
                             </span>
                             <div className="text-xs text-neutral-400">
-                              {stemResult.stats.noteCount} notes · Range: {stemResult.stats.pitchRange}
+                              {stemResult.stats.noteCount} notes
+                              {stemResult.stats.rawNoteCount !== stemResult.stats.noteCount &&
+                                ` (cleaned from ${stemResult.stats.rawNoteCount})`}
+                              {stemResult.stats.outOfKeyCount != null && stemResult.stats.outOfKeyCount > 0 &&
+                                ` · ${stemResult.stats.outOfKeyCount} out of key`}{' '}
+                              · Range: {stemResult.stats.pitchRange}
                             </div>
                           </div>
                         </div>
@@ -968,6 +1057,11 @@ export default function App() {
                 totalDuration={conversionResult.durationSeconds}
                 currentPlaybackTime={playbackTime}
                 activeStems={pianoRollFilter === 'all' ? activeAuditionStems : new Set([pianoRollFilter])}
+                keyInfo={
+                  conversionResult.analysis.key
+                    ? { tonic: conversionResult.analysis.key.tonic, mode: conversionResult.analysis.key.mode }
+                    : null
+                }
               />
 
               {/* Color Legend */}

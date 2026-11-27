@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -79,17 +79,24 @@ function showBuildPrompt(win) {
 }
 
 // Native OS drag-and-drop out to Desktop / DAW (Ableton, Logic, FL Studio, etc.)
+// The file is written synchronously BEFORE startDrag is called: the OS drag
+// session reads the file lazily, so it must already exist on disk.
 ipcMain.on('start-drag', (event, { fileName, base64Data }) => {
   try {
     const filePath = path.join(tempDir, fileName);
     const buffer = Buffer.from(base64Data, 'base64');
     fs.writeFileSync(filePath, buffer);
 
+    // Pass a real NativeImage for the drag icon (a bare path string is only
+    // tolerated on macOS; a NativeImage works on every platform, and an
+    // empty image means the drag would fail silently — fall back to no icon).
     const iconPath = path.join(__dirname, 'midi_icon.png');
-    event.sender.startDrag({
-      file: filePath,
-      icon: fs.existsSync(iconPath) ? iconPath : undefined,
-    });
+    const icon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : null;
+    const dragItem = { file: filePath };
+    if (icon && !icon.isEmpty()) {
+      dragItem.icon = icon;
+    }
+    event.sender.startDrag(dragItem);
   } catch (err) {
     console.error('Error in native startDrag:', err);
   }
