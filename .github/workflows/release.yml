@@ -15,6 +15,17 @@
 # click "More info -> Run anyway" on the SmartScreen prompt.
 #
 # The repo is public, so standard GitHub-hosted runners are free.
+#
+# Two guards for the HTDemucs separator (onnxruntime-node):
+#   - package.json carries an "allowScripts" field (npm's install-script
+#     approvals). npm >= 12 blocks dependency install scripts by default;
+#     the approved set — onnxruntime-node, electron-winstaller, esbuild,
+#     and friends — is recorded there so `npm ci` runs them everywhere,
+#     including here. Keep it current with
+#     `npm install-scripts approve <pkg>` when dependencies change.
+#   - Each job verifies the onnxruntime-node native binding actually
+#     loads before packaging, so a build can never ship with a silently
+#     dead separator inside.
 
 name: Release builds
 
@@ -36,7 +47,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       # build/icon.png is generated, not committed — the packaging config
@@ -51,6 +62,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
+
+      - name: Verify separator runtime loads
+        run: node -e "require('onnxruntime-node'); console.log('onnxruntime-node native binding loads OK')"
 
       - name: Build and package (universal)
         run: |
@@ -84,7 +98,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - uses: actions/setup-python@v5
@@ -97,6 +111,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
+
+      - name: Verify separator runtime loads
+        run: node -e "require('onnxruntime-node'); console.log('onnxruntime-node native binding loads OK')"
 
       - name: Build and package (NSIS installer + portable exe)
         run: |
