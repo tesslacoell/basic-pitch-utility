@@ -50,6 +50,7 @@
   "build": {
     "appId": "com.spotify.basicpitch.desktop",
     "productName": "Basic Pitch MIDI",
+    "publish": null,
     "directories": {
       "output": "release"
     },
