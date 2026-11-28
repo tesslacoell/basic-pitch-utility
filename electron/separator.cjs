@@ -7,7 +7,11 @@
  * and cache it there. Nothing about separation works without the model,
  * by design: there is no filter-bank fallback pretending to be a stem.
  *
- * Model: htdemucs_6s (Meta AI) ONNX export, fp16-weights build.
+ * Model: htdemucs_6s (Meta AI) ONNX export, full fp32 build. (The
+ * fp16-weights build was retired in beta.2: the one in-app crash on
+ * record happened inside ORT allocation during fp16 inference in the
+ * Electron main process, while the fp32 build is the path verified
+ * end-to-end before release.)
  *   stems: drums, bass, other, vocals, guitar, piano
  *   license: MIT (per the export's model card)
  *   sha256 pinned below — a download that does not match is rejected.
@@ -23,11 +27,11 @@ const https = require('https');
 const crypto = require('crypto');
 
 const MODEL = {
-  version: 'htdemucs-6s-fp16-v1',
-  fileName: 'htdemucs_6s_fp16weights.onnx',
-  url: 'https://huggingface.co/Acapellas/htdemucs-6s-onnx/resolve/main/htdemucs_6s_fp16weights.onnx',
-  sizeBytes: 136428532,
-  sha256: '7ce55792e2231c93fbf92de95f5fd5b3a5e6c89f7db690dfd693e8f1dce56869',
+  version: 'htdemucs-6s-fp32-v1',
+  fileName: 'htdemucs_6s.onnx',
+  url: 'https://huggingface.co/Acapellas/htdemucs-6s-onnx/resolve/main/htdemucs_6s.onnx',
+  sizeBytes: 258159781,
+  sha256: '48f8e84945579f8ab340e083339e9221e03785dbe733a52c388200b6d3ca779a',
   licenseName: 'MIT',
 };
 

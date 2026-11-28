@@ -18,7 +18,7 @@ An audio-to-MIDI converter and instrument stem extractor powered by **Spotify's 
   - 🎤 **Lead & Vocals**: Melodic top-lines, vocal contours, and pitch bends.
   - 🥁 **Drums**: Kick, snare, hats and toms transcribed from the separated drums stem.
   - **Separated audio out, too**: every separated stem can be downloaded or dragged out as a 24-bit WAV, individually or as an **Audio Stems (.ZIP)**.
-  - The model (~130 MB, MIT license) is **not bundled** with the app. The first time you separate, the app shows the license and, with your agreement, downloads the model once and verifies it against a pinned checksum; it re-downloads only when the model version changes.
+  - The model (~258 MB, MIT license) is **not bundled** with the app. The first time you separate, the app shows the license and, with your agreement, downloads the model once and verifies it against a pinned checksum; it re-downloads only when the model version changes.
 - **Combined Master Multi-Track MIDI**:
   - Automatically exports all extracted stems arranged onto separate MIDI channels (Ch 1: Piano, Ch 2: Guitars, Ch 3: Bass, Ch 4: Lead) in a single master `.mid` file.
 - **Built-in Audition & Visualizer**:
