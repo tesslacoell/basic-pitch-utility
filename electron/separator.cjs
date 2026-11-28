@@ -8,10 +8,10 @@
  * by design: there is no filter-bank fallback pretending to be a stem.
  *
  * Model: htdemucs_6s (Meta AI) ONNX export, full fp32 build. (The
- * fp16-weights build was retired in beta.2: the one in-app crash on
- * record happened inside ORT allocation during fp16 inference in the
- * Electron main process, while the fp32 build is the path verified
- * end-to-end before release.)
+ * fp16-weights build was retired in beta.2 during the first in-app
+ * crash investigation; the crash was later proven model-independent
+ * — see the arena note at InferenceSession.create below. fp32 stays:
+ * it is the model's native precision and ran faster in testing.)
  *   stems: drums, bass, other, vocals, guitar, piano
  *   license: MIT (per the export's model card)
  *   sha256 pinned below — a download that does not match is rejected.
@@ -237,6 +237,14 @@ async function separate(modelsDir, inputWavPath, sessionDir, wantAppStems, onPro
 
   const session = await ort.InferenceSession.create(modelPath, {
     graphOptimizationLevel: 'all',
+    // The CPU memory arena must stay OFF in the Electron main process:
+    // the arena's BFC Extend makes very large single allocations, and
+    // an allocation failure inside Chromium's browser process is fatal
+    // (EXC_BREAKPOINT in BFCArena::Extend on the first chunk — the
+    // beta.1/beta.2 crash). Per-tensor allocation completes the same
+    // separation reliably; verified in an Electron harness run.
+    enableCpuMemArena: false,
+    enableMemPattern: false,
   });
 
   const nChunks = Math.max(1, Math.ceil(total / STRIDE));
